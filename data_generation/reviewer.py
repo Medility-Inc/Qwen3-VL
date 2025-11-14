@@ -19,6 +19,66 @@ load_dotenv(Path(__file__).parent / ".env")
 logger = logging.getLogger(__name__)
 
 
+def _is_complete_sentence(text: str) -> bool:
+    """
+    텍스트가 완전한 문장인지 확인
+    
+    Args:
+        text: 확인할 텍스트
+        
+    Returns:
+        완전한 문장이면 True, 불완전하면 False
+    """
+    if not text or not text.strip():
+        return False
+    
+    import re
+    
+    # 따옴표 제거 (JSON에서 온 경우)
+    text = text.strip().strip('"').strip("'")
+    
+    # 빈 문자열 체크
+    if not text:
+        return False
+    
+    # 마지막 문자가 구두점(., !, ?, 。)인지 확인
+    last_char = text[-1]
+    has_ending_punctuation = last_char in '.!?。'
+    
+    # 문장이 끝나지 않은 패턴 감지 (조사로 끝나는 경우)
+    incomplete_patterns = [
+        r'[가-힣]이$',  # "리바록사반이" 같은 경우
+        r'[가-힣]가$',  # "의약품이" 같은 경우
+        r'[가-힣]을$',  # "알약을" 같은 경우
+        r'[가-힣]를$',  # "정제를" 같은 경우
+        r'[가-힣]은$',  # "약은" 같은 경우
+        r'[가-힣]는$',  # "약은" 같은 경우
+        r'[가-힣]와$',  # "약과" 같은 경우
+        r'[가-힣]과$',  # "약과" 같은 경우
+        r'[가-힣]에$',  # "약포에" 같은 경우
+        r'[가-힣]에서$',  # "이미지에서" 같은 경우
+        r'[가-힣]로$',  # "약으로" 같은 경우
+        r'[가-힣]으로$',  # "약으로" 같은 경우
+        r'[가-힣]의$',  # "약의" 같은 경우
+    ]
+    
+    # 조사로 끝나는 경우 (구두점 없이) 불완전한 문장으로 간주
+    for pattern in incomplete_patterns:
+        if re.search(pattern, text) and not has_ending_punctuation:
+            return False
+    
+    # "이다"로 끝나는 경우도 체크 (구두점 없으면 불완전)
+    if re.search(r'[가-힣]이다$', text) and not has_ending_punctuation:
+        return False
+    
+    # 너무 짧은 경우 (3자 이하) 불완전할 가능성
+    if len(text) <= 3:
+        return False
+    
+    # 기본적으로 완전한 문장으로 간주 (구두점이 있거나, 충분히 긴 경우)
+    return True
+
+
 def _clean_thinking(text: str) -> str:
     """Qwen3-VL Thinking 모델의 thinking 부분 제거"""
     if not text:
@@ -596,6 +656,81 @@ index|YES 또는 NO|0.0-1.0 사이의 score|reason
         logger.info(f"검수 완료: {approved_count}/{len(questions)}개 통과")
         
         return reviewed_questions
+    
+    def review_qa_pairs(
+        self,
+        qa_pairs: List[Dict[str, str]],
+        image_path: str,
+        medicine_info: List[Dict],
+        source: str
+    ) -> List[Dict]:
+        """
+        질문-답변 쌍 검수
+        
+        검수 항목:
+        1. Hallucination 체크: 질문과 답변이 이미지/의약품 정보와 모순되는지 확인
+        2. 완전한 문장 체크: 질문과 답변이 완전한 문장 형태인지 확인
+        
+        Args:
+            qa_pairs: 검수할 질문-답변 쌍 리스트 [{"question": str, "answer": str}, ...]
+            image_path: 이미지 경로
+            medicine_info: 해당 이미지의 의약품 정보
+            source: 질문 출처 ("gpt" 또는 "qwen3vl")
+        
+        Returns:
+            검수 결과 리스트 [{"question": str, "answer": str, "approved": bool, "reason": str}, ...]
+        """
+        logger.info(f"{source}에서 생성된 {len(qa_pairs)}개의 질문-답변 쌍 검수 시작...")
+        
+        reviewed_pairs = []
+        
+        for idx, qa_pair in enumerate(qa_pairs, start=1):
+            question = qa_pair.get("question", "").strip()
+            answer = qa_pair.get("answer", "").strip()
+            
+            # 1. 완전한 문장 체크 (우선 검사)
+            question_complete = _is_complete_sentence(question)
+            answer_complete = _is_complete_sentence(answer)
+            
+            if not question_complete:
+                reviewed_pairs.append({
+                    **qa_pair,
+                    "approved": False,
+                    "reason": "질문이 완전한 문장 형태가 아닙니다"
+                })
+                continue
+            
+            if not answer_complete:
+                reviewed_pairs.append({
+                    **qa_pair,
+                    "approved": False,
+                    "reason": "답변이 완전한 문장 형태가 아닙니다"
+                })
+                continue
+            
+            # 2. Hallucination 체크 (질문만 검수)
+            if source == "gpt":
+                review_result = self.review_with_qwen3vl(question, image_path, medicine_info)
+            else:
+                review_result = self.review_with_gpt(question, image_path, medicine_info)
+            
+            # 완전한 문장이고 hallucination이 없으면 통과
+            approved = review_result["approved"]
+            reason = review_result["reason"]
+            
+            reviewed_pairs.append({
+                **qa_pair,
+                "approved": approved,
+                "reason": reason
+            })
+            
+            if idx % 5 == 0:
+                logger.info(f"검수 진행 중: {idx}/{len(qa_pairs)}")
+        
+        approved_count = sum(1 for qa in reviewed_pairs if qa["approved"])
+        logger.info(f"검수 완료: {approved_count}/{len(qa_pairs)}개 통과")
+        
+        return reviewed_pairs
     
     def deduplicate_questions(self, questions: List[str], image_path: str) -> List[str]:
         """

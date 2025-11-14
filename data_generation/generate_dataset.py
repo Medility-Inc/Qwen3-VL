@@ -109,50 +109,43 @@ class DatasetGenerator:
                 return []
             
             # 2. 상호 검수 (질문-답변 쌍 검수)
-            logger.info("2단계: 상호 검수")
-            all_qa_pairs = gpt_qa_pairs + qwen_qa_pairs
-            
-            # 질문만 추출하여 검수
-            all_questions = [qa["question"] for qa in all_qa_pairs]
-            
-            # GPT 질문 검수 (Qwen3-VL로)
-            gpt_questions = [qa["question"] for qa in gpt_qa_pairs]
-            qwen_questions = [qa["question"] for qa in qwen_qa_pairs]
+            logger.info("2단계: 상호 검수 (hallucination 체크 + 완전한 문장 체크)")
             
             reviewed_gpt = []
             reviewed_qwen = []
             
-            if gpt_questions:
-                reviewed_gpt = self.reviewer.review_questions(
-                    gpt_questions,
+            # GPT 질문-답변 쌍 검수 (Qwen3-VL로)
+            if gpt_qa_pairs:
+                reviewed_gpt = self.reviewer.review_qa_pairs(
+                    gpt_qa_pairs,
                     image_path,
                     data_item.get("medicine_info", []),
                     "gpt"
                 )
             
-            if qwen_questions:
-                reviewed_qwen = self.reviewer.review_questions(
-                    qwen_questions,
+            # Qwen3-VL 질문-답변 쌍 검수 (GPT로)
+            if qwen_qa_pairs:
+                reviewed_qwen = self.reviewer.review_qa_pairs(
+                    qwen_qa_pairs,
                     image_path,
                     data_item.get("medicine_info", []),
                     "qwen3vl"
                 )
             
             # 검수 통과한 질문-답변 쌍만 추출
-            approved_gpt_indices = {i for i, q in enumerate(reviewed_gpt) if q["approved"]}
-            approved_qwen_indices = {i for i, q in enumerate(reviewed_qwen) if q["approved"]}
-            
             approved_qa_pairs = []
-            for i, qa in enumerate(gpt_qa_pairs):
-                if i in approved_gpt_indices:
-                    approved_qa_pairs.append(qa)
+            for reviewed in reviewed_gpt + reviewed_qwen:
+                if reviewed.get("approved", False):
+                    approved_qa_pairs.append({
+                        "question": reviewed["question"],
+                        "answer": reviewed["answer"]
+                    })
             
-            for i, qa in enumerate(qwen_qa_pairs):
-                if i in approved_qwen_indices:
-                    approved_qa_pairs.append(qa)
+            gpt_approved = sum(1 for qa in reviewed_gpt if qa.get("approved", False))
+            qwen_approved = sum(1 for qa in reviewed_qwen if qa.get("approved", False))
             
-            logger.info(f"  - GPT 질문-답변 쌍 검수 통과: {len([i for i in approved_gpt_indices])}/{len(gpt_qa_pairs)}")
-            logger.info(f"  - Qwen3-VL 질문-답변 쌍 검수 통과: {len([i for i in approved_qwen_indices])}/{len(qwen_qa_pairs)}")
+            logger.info(f"  - GPT 질문-답변 쌍 검수 통과: {gpt_approved}/{len(gpt_qa_pairs)}")
+            logger.info(f"  - Qwen3-VL 질문-답변 쌍 검수 통과: {qwen_approved}/{len(qwen_qa_pairs)}")
             
             if not approved_qa_pairs:
                 logger.warning("검수 통과한 질문-답변 쌍이 없습니다.")

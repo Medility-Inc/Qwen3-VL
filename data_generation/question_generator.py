@@ -205,10 +205,17 @@ class QuestionGenerator:
         if medicine_info:
             medicine_names_in_list = [med.get("item_name", "") for med in medicine_info if med.get("item_name")]
         
+        # 의약품 목록을 명시적으로 표시
+        medicine_list_section = ""
+        if medicine_names_in_list:
+            medicine_list_section = f"\n\n**Available medicines in this image (use ALL of them evenly, not just one):**\n" + "\n".join(f"- {name}" for name in medicine_names_in_list)
+            medicine_list_section += f"\n\n**IMPORTANT: Generate questions about ALL medicines evenly. Do NOT focus on only one medicine (e.g., {medicine_names_in_list[0] if medicine_names_in_list else 'one medicine'}). Distribute questions across all available medicines.**"
+        
         prompt = f"""You are an expert at analyzing medicine blister pack images and generating VQA question-answer pairs.
 
 Medicine information (reference only, use as supplementary):
 {medicine_context}
+{medicine_list_section}
 
 Image path: {image_path}
 {exclude_section}
@@ -218,12 +225,22 @@ Generate {max_qa_pairs} question-answer pairs that satisfy all conditions below:
 **Key Principles:**
 1. Questions must be image-centered. Medicine information should only be used to supplement image observations or identify specific medicines.
 2. Questions and answers must be written in Korean only. Do not use English words or abbreviations.
-3. Question-answer pair composition:
+3. **DO NOT generate questions about the blister pack (약포/약폼) itself**, such as:
+   - Questions about the blister pack's backside printing (약포 뒷면 인쇄)
+   - Questions about the blister pack's packaging form (약포 포장 형태)
+   - Questions about the blister pack's design or markings (약포 디자인이나 표시)
+   - Focus only on the medicines (알약/의약품) inside the blister pack, not the packaging itself.
+4. **CRITICAL: Use ALL medicines evenly in your questions. If there are multiple medicines in the medicine information list, generate questions about EACH medicine, not just one. Distribute questions across all available medicines to ensure balanced coverage.**
+5. **IMPORTANT: Do NOT directly mention printing/marking information (각인/인쇄 정보) in answers. Use printing/marking information ONLY for identifying which medicine it is, but do not explicitly describe the printing details in the answer. For example:**
+   - BAD: "뒷면에 삼각형과 숫자 2.5로 보이는 인쇄가 반복되어 있습니다. 제공된 의약품 정보에 따르면 카사반정 2.5밀리그램은 뒷면에 삼각형 모양과 2.5 표시가 있는 것으로 되어 있어..."
+   - GOOD: "이미지에서 보이는 약은 흰색 계열의 작은 원형 정제로 보입니다. 제공된 의약품 정보에 따르면 카사반정 2.5밀리그램은 원형 정제로 되어 있어, 이 포장의 약은 카사반정 2.5밀리그램으로 판단할 수 있습니다."
+   - Focus on visible characteristics like color, shape, size, and use medicine information to identify the medicine, but do not mention printing/marking details in the answer.
+6. Question-answer pair composition:
    - Basic pairs ({basic_qa_count} pairs): Questions answerable from image only (e.g., "이 약포에 의약품이 몇 개 들어가있나요?" → "이미지에서 약포 안에 들어 있는 의약품을 직접 관찰해 보니 총 4개가 확인됩니다.")
    - Extended pairs ({max_qa_pairs - basic_qa_count} pairs): Questions combining image observation + medicine information (e.g., "이 약포에 있는 라베라톤정의 주성분은 무엇인가요?" → "이 약포에 보이는 라베라톤정의 주성분은 라베프라졸 나트륨입니다.")
-4. About {negative_ratio}% of questions should be negative samples asking about medicines NOT in the medicine information list. The medicine information list contains: {', '.join(medicine_names_in_list[:10]) if medicine_names_in_list else 'none'}. For negative samples, ask about medicines that are NOT in this list. For example: "이 약포에 아스피린이 들어가 있나요?" → "아니요. 이미지에서 확인된 의약품들은 모두 제공된 의약품 정보 목록에 포함되어 있으며, 아스피린은 목록에 없습니다."
-5. Questions should cover various aspects: existence/counting/color/shape/location/etc.
-6. Each question should be a single line ending with '?', and each answer should be 2-4 sentences in Korean.
+7. About {negative_ratio}% of questions should be negative samples asking about medicines NOT in the medicine information list. The medicine information list contains: {', '.join(medicine_names_in_list[:10]) if medicine_names_in_list else 'none'}. For negative samples, ask about medicines that are NOT in this list. For example: "이 약포에 아스피린이 들어가 있나요?" → "아니요. 이미지에서 확인된 의약품들은 모두 제공된 의약품 정보 목록에 포함되어 있으며, 아스피린은 목록에 없습니다."
+8. Questions should cover various aspects: existence/counting/color/shape/location/etc.
+9. Each question should be a single line ending with '?', and each answer should be 2-4 sentences in Korean.
 
 **Basic question-answer examples (image-centered):**
 - Q: "이 약포에 의약품이 몇 개 들어가있나요?"
@@ -232,6 +249,17 @@ Generate {max_qa_pairs} question-answer pairs that satisfy all conditions below:
 **Extended question-answer examples (image + medicine info):**
 - Q: "이 약포에 있는 라베라톤정의 주성분은 무엇인가요?"
   A: "이 약포에 보이는 라베라톤정의 주성분은 라베프라졸 나트륨입니다. 이미지에서 확인된 흰색 타원형 필름코팅정과 의약품 정보에서 '성분: 1정 중 라베프라졸 나트륨 10mg'으로 명시된 내용이 일치합니다."
+
+- Q: "이 약포에 보이는 약이 카사반정 2.5밀리그램인지, 이미지와 의약품 정보를 함께 근거로 설명해 줄 수 있나요?"
+  A: "이미지에서 보이는 약은 흰색 계열의 작은 원형 정제로 보입니다. 제공된 의약품 정보에 따르면 카사반정 2.5밀리그램은 원형 정제로 되어 있어, 이 포장의 약은 카사반정 2.5밀리그램으로 판단할 수 있습니다."
+  (Note: Do NOT mention printing/marking details like "뒷면에 삼각형과 숫자 2.5로 보이는 인쇄" in the answer. Use printing information only for identification, not for description.)
+
+**Examples of using multiple medicines evenly (if multiple medicines exist):**
+- If medicines include "가스디알정" and "카사반정", generate questions about BOTH:
+  - Q: "이 약포에 가스디알정이 들어가 있나요?"
+  - Q: "이 약포에 카사반정의 주성분은 무엇인가요?"
+  - Q: "이 약포에 가스디알정과 카사반정 중 어떤 것이 더 많은가요?"
+- Do NOT generate all questions about only one medicine (e.g., only 카사반정).
 
 **Negative sample examples (medicine NOT in the list):**
 - Q: "이 약포에 아스피린이 들어가 있나요?"
@@ -313,6 +341,9 @@ Output format: Each line should be "Q: [question]\nA: [answer]" (one pair per li
         system_prompt = """You are an expert at generating Korean VQA question-answer pairs for medicine blister pack images.
 - Generate questions and answers in Korean only.
 - Questions must be image-centered.
+- DO NOT generate questions about the blister pack (약포/약폼) itself, such as questions about the blister pack's backside printing, packaging form, or design. Focus only on the medicines (알약/의약품) inside the blister pack.
+- CRITICAL: Use ALL medicines evenly in your questions. If there are multiple medicines in the medicine information list, generate questions about EACH medicine, not just one. Distribute questions across all available medicines to ensure balanced coverage.
+- IMPORTANT: Do NOT directly mention printing/marking information (각인/인쇄 정보) in answers. Use printing/marking information ONLY for identifying which medicine it is, but do not explicitly describe the printing details in the answer. Focus on visible characteristics like color, shape, size instead.
 - Answers should be 2-4 sentences in Korean, focusing on image observations first, then supplementing with medicine information when needed."""
 
         try:
