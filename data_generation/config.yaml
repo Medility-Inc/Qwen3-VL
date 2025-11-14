@@ -1,0 +1,79 @@
+# Qwen3-VL 데이터셋 생성 설정 파일
+
+# 데이터베이스 설정 (환경변수에서 로드)
+database:
+  host: ${DB_HOST}
+  username: ${DB_USERNAME}
+  password: ${DB_PASSWORD}
+  schema: "data-catalog"
+  port: 3306
+
+# API 설정
+api:
+  openai:
+    model: "gpt-5.1"  # GPT-5.1 모델 사용
+    max_tokens: 2048
+    temperature: 0.7
+  
+  qwen3vl:
+    base_url: "http://localhost:1119"
+    max_tokens: 2048
+    temperature: 0.7
+    top_p: 0.8
+
+# 데이터 수집 설정
+data_collection:
+  split_version_id: 128
+  min_date: "2025-08-01"
+  side: "inner"
+  random_sample_size: 100  # 한 번에 샘플링할 이미지 수
+  image_dir: "images"  # 상대 경로
+
+# 질문 생성 설정
+question_generation:
+  # 질문 유형별 가중치 (쉬움 50%, 중간 30%, 어려움 20%)
+  difficulty_distribution:
+    easy: 0.5
+    medium: 0.3
+    hard: 0.2
+  
+  # 질문 유형
+  question_types:
+    - "존재 확인 (Yes/No)"
+    - "개수 세기 (Counting)"
+    - "색상 식별"
+    - "형태 설명"
+    - "위치 확인"
+  
+  # 부정 샘플 설정
+  negative_sample_ratio: 0.25  # 부정 샘플 비율 (20-30% 권장)
+  
+  # 이미지당 생성할 질문 수 제한
+  max_questions_per_model: 10  # 각 모델당 최대 질문 수
+  max_total_questions: 15  # 전체 최대 질문 수 (검수 전)
+
+# 검수 설정
+review:
+  # 검수 통과 기준
+  min_quality_score: 0.7
+  
+  # Rate limiting 설정 (초 단위)
+  rate_limit_delay: 0.5  # API 호출 간 최소 대기 시간
+  
+  # 중복 제거 설정
+  deduplication:
+    similarity_threshold: 0.85  # 의미적 유사도 임계값
+    method: "qwen3vl"  # 중복 제거는 Qwen3-VL-8B-Thinking이 수행
+
+# 출력 설정
+output:
+  dataset_file: "dataset.json"
+  used_images_file: "used_images.json"
+  checkpoint_dir: "checkpoints"
+  log_file: "generation.log"
+
+# 로깅 설정
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
