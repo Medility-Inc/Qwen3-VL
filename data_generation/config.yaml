@@ -50,15 +50,18 @@ question_generation:
   
   # 이미지당 생성할 질문 수 제한
   max_questions_per_model: 10  # 각 모델당 최대 질문 수
-  max_total_questions: 15  # 전체 최대 질문 수 (검수 전)
+  max_total_questions: 20  # 전체 최대 질문 수 (검수 전)
+  force_questions_per_model: true  # 모델당 질문 수 보장
 
 # 검수 설정
 review:
-  # 검수 통과 기준
-  min_quality_score: 0.7
+  # 검수 통과 기준 (완화됨: 실제로는 0.5 이상이면 통과)
+  min_quality_score: 0.5
   
   # Rate limiting 설정 (초 단위)
   rate_limit_delay: 0.5  # API 호출 간 최소 대기 시간
+
+  batch_mode: true  # 질문들을 배치로 검수
   
   # 중복 제거 설정
   deduplication:

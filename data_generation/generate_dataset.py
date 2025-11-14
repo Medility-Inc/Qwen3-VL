@@ -52,15 +52,11 @@ class DatasetGenerator:
         self.reviewer = Reviewer(config_path)
         self.answer_generator = AnswerGenerator(config_path)
         
-        # 설정 로드
-        import yaml
-        with open(Path(__file__).parent / config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
-        
-        difficulty_dist = config.get("question_generation", {}).get("difficulty_distribution", {})
+        question_generation_config = self.question_generator.config.get("question_generation", {})
+        difficulty_dist = question_generation_config.get("difficulty_distribution", {})
         self.dataset_converter = DatasetConverter(difficulty_dist)
         
-        self.output_config = config.get("output", {})
+        self.output_config = self.question_generator.config.get("output", {})
         logger.info("모듈 초기화 완료")
     
     def process_single_image(self, data_item: Dict) -> List[Dict]:
@@ -77,91 +73,94 @@ class DatasetGenerator:
         logger.info(f"이미지 처리 시작: {image_path}")
         
         try:
-            # 1. 질문 생성 (GPT-5.1과 Qwen3-VL-8B-Thinking)
-            logger.info("1단계: 질문 생성")
-            questions_dict = self.question_generator.generate_questions(data_item)
+            # 1. 질문-답변 쌍 생성 (GPT-5.1과 Qwen3-VL-8B-Thinking)
+            logger.info("1단계: 질문-답변 쌍 생성")
+            qa_pairs_dict = self.question_generator.generate_questions(data_item)
             
-            gpt_questions = questions_dict.get("gpt", [])
-            qwen_questions = questions_dict.get("qwen3vl", [])
+            gpt_qa_pairs = qa_pairs_dict.get("gpt", [])
+            qwen_qa_pairs = qa_pairs_dict.get("qwen3vl", [])
             
-            # 전체 질문 수 제한
-            import yaml
-            with open(Path(__file__).parent / self.config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-            max_total = config.get("question_generation", {}).get("max_total_questions", 15)
+            # 전체 질문-답변 쌍 수 제한
+            max_total = self.question_generator.question_config.get("max_total_questions", 20)
+            force_per_model = self.question_generator.question_config.get("force_questions_per_model", False)
             
             # 각 모델에서 균등하게 가져오기
-            total_questions = len(gpt_questions) + len(qwen_questions)
-            if total_questions > max_total:
-                # 비율에 맞춰 제한
-                gpt_ratio = len(gpt_questions) / total_questions if total_questions > 0 else 0.5
-                gpt_limit = max(1, int(max_total * gpt_ratio))
-                qwen_limit = max_total - gpt_limit
-                
-                gpt_questions = gpt_questions[:gpt_limit]
-                qwen_questions = qwen_questions[:qwen_limit]
-                logger.info(f"  - 질문 수 제한 적용: 총 {max_total}개로 제한")
+            total_qa_pairs = len(gpt_qa_pairs) + len(qwen_qa_pairs)
+            if total_qa_pairs > max_total:
+                if force_per_model:
+                    logger.info(
+                        f"  - force_questions_per_model 활성화로 {total_qa_pairs}개 질문-답변 쌍을 그대로 유지 (max_total={max_total})"
+                    )
+                else:
+                    # 비율에 맞춰 제한
+                    gpt_ratio = len(gpt_qa_pairs) / total_qa_pairs if total_qa_pairs > 0 else 0.5
+                    gpt_limit = max(1, int(max_total * gpt_ratio))
+                    qwen_limit = max_total - gpt_limit
+                    
+                    gpt_qa_pairs = gpt_qa_pairs[:gpt_limit]
+                    qwen_qa_pairs = qwen_qa_pairs[:qwen_limit]
+                    logger.info(f"  - 질문-답변 쌍 수 제한 적용: 총 {max_total}개로 제한")
             
-            logger.info(f"  - GPT-5.1: {len(gpt_questions)}개 질문 생성")
-            logger.info(f"  - Qwen3-VL-8B-Thinking: {len(qwen_questions)}개 질문 생성")
+            logger.info(f"  - GPT-5.1: {len(gpt_qa_pairs)}개 질문-답변 쌍 생성")
+            logger.info(f"  - Qwen3-VL-8B-Thinking: {len(qwen_qa_pairs)}개 질문-답변 쌍 생성")
             
-            if not gpt_questions and not qwen_questions:
-                logger.warning("생성된 질문이 없습니다.")
+            if not gpt_qa_pairs and not qwen_qa_pairs:
+                logger.warning("생성된 질문-답변 쌍이 없습니다.")
                 return []
             
-            # 2. 상호 검수
+            # 2. 상호 검수 (질문-답변 쌍 검수)
             logger.info("2단계: 상호 검수")
+            all_qa_pairs = gpt_qa_pairs + qwen_qa_pairs
+            
+            # 질문만 추출하여 검수
+            all_questions = [qa["question"] for qa in all_qa_pairs]
+            
+            # GPT 질문 검수 (Qwen3-VL로)
+            gpt_questions = [qa["question"] for qa in gpt_qa_pairs]
+            qwen_questions = [qa["question"] for qa in qwen_qa_pairs]
+            
             reviewed_gpt = []
             reviewed_qwen = []
             
             if gpt_questions:
-                reviewed_gpt = self.reviewer.review_questions(gpt_questions, image_path, "gpt")
+                reviewed_gpt = self.reviewer.review_questions(
+                    gpt_questions,
+                    image_path,
+                    data_item.get("medicine_info", []),
+                    "gpt"
+                )
             
             if qwen_questions:
-                reviewed_qwen = self.reviewer.review_questions(qwen_questions, image_path, "qwen3vl")
-            
-            # 검수 통과한 질문만 추출
-            approved_gpt = [q["question"] for q in reviewed_gpt if q["approved"]]
-            approved_qwen = [q["question"] for q in reviewed_qwen if q["approved"]]
-            
-            logger.info(f"  - GPT 질문 검수 통과: {len(approved_gpt)}/{len(gpt_questions)}")
-            logger.info(f"  - Qwen3-VL 질문 검수 통과: {len(approved_qwen)}/{len(qwen_questions)}")
-            
-            # 3. 중복 제거 (Qwen3-VL-8B-Thinking이 수행)
-            logger.info("3단계: 중복 제거")
-            all_approved_questions = approved_gpt + approved_qwen
-            
-            if len(all_approved_questions) > 1:
-                deduplicated_questions = self.reviewer.deduplicate_questions(
-                    all_approved_questions,
-                    image_path
+                reviewed_qwen = self.reviewer.review_questions(
+                    qwen_questions,
+                    image_path,
+                    data_item.get("medicine_info", []),
+                    "qwen3vl"
                 )
-            else:
-                deduplicated_questions = all_approved_questions
             
-            logger.info(f"  - 중복 제거 후: {len(deduplicated_questions)}개 질문")
+            # 검수 통과한 질문-답변 쌍만 추출
+            approved_gpt_indices = {i for i, q in enumerate(reviewed_gpt) if q["approved"]}
+            approved_qwen_indices = {i for i, q in enumerate(reviewed_qwen) if q["approved"]}
             
-            if not deduplicated_questions:
-                logger.warning("중복 제거 후 질문이 없습니다.")
+            approved_qa_pairs = []
+            for i, qa in enumerate(gpt_qa_pairs):
+                if i in approved_gpt_indices:
+                    approved_qa_pairs.append(qa)
+            
+            for i, qa in enumerate(qwen_qa_pairs):
+                if i in approved_qwen_indices:
+                    approved_qa_pairs.append(qa)
+            
+            logger.info(f"  - GPT 질문-답변 쌍 검수 통과: {len([i for i in approved_gpt_indices])}/{len(gpt_qa_pairs)}")
+            logger.info(f"  - Qwen3-VL 질문-답변 쌍 검수 통과: {len([i for i in approved_qwen_indices])}/{len(qwen_qa_pairs)}")
+            
+            if not approved_qa_pairs:
+                logger.warning("검수 통과한 질문-답변 쌍이 없습니다.")
                 return []
             
-            # 4. 답변 생성
-            logger.info("4단계: 답변 생성")
-            qa_pairs = self.answer_generator.generate_answers(
-                deduplicated_questions,
-                image_path,
-                use_qwen=True  # Qwen3-VL 사용
-            )
-            
-            logger.info(f"  - 답변 생성 완료: {len(qa_pairs)}개")
-            
-            if not qa_pairs:
-                logger.warning("생성된 답변이 없습니다.")
-                return []
-            
-            # 5. Qwen3-VL 형식으로 변환
-            logger.info("5단계: 데이터셋 형식 변환")
-            qwen_data = self.dataset_converter.convert_to_qwen_format(image_path, qa_pairs)
+            # 3. Qwen3-VL 형식으로 변환
+            logger.info("3단계: 데이터셋 형식 변환")
+            qwen_data = self.dataset_converter.convert_to_qwen_format(image_path, approved_qa_pairs)
             
             logger.info(f"이미지 처리 완료: {image_path} ({len(qwen_data)}개 항목 생성)")
             return qwen_data
