@@ -152,8 +152,21 @@ class QuestionGenerator:
                     text = parts[-1].strip()
                     break
         
-        # 영어 reasoning 패턴 제거
+        # Q: 또는 A:로 시작하는 라인이 있으면 그 부분부터 유지 (질문-답변 형식이 있는 경우)
         lines = text.split('\n')
+        qa_start_idx = None
+        for idx, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("Q:") or stripped.startswith("A:") or stripped.startswith("질문:") or stripped.startswith("답변:"):
+                qa_start_idx = idx
+                break
+        
+        # 질문-답변 형식이 발견되면 그 부분부터만 사용
+        if qa_start_idx is not None:
+            text = '\n'.join(lines[qa_start_idx:])
+            return text.strip()
+        
+        # 질문-답변 형식이 없으면 기존 로직 사용 (더 관대하게)
         cleaned_lines = []
         english_reasoning_patterns = [
             r'^(Okay|So|Wait|Got it|Let me|I need|First|Then|But|However|Therefore|Thus|In the image|Looking at|Let\'s|I can see|The image shows|The user|Alternatively|Another|Check if|Wait,|So,|tackle)',
@@ -165,6 +178,8 @@ class QuestionGenerator:
         for line in lines:
             line = line.strip()
             if not line:
+                # 빈 줄은 유지 (질문-답변 구분에 필요할 수 있음)
+                cleaned_lines.append("")
                 continue
             
             has_korean = bool(re.search(r'[가-힣]', line))
@@ -175,15 +190,26 @@ class QuestionGenerator:
                     is_reasoning = True
                     break
             
-            # 영어로만 구성된 긴 라인은 reasoning으로 간주
+            # 영어로만 구성된 라인도 한글이 포함된 라인 다음에 오면 유지 (답변의 일부일 수 있음)
             is_english_only = bool(re.match(r'^[A-Za-z0-9\s\.,:;!?\-\(\)\[\]\"\'/]+$', line)) and not has_korean
-            if is_reasoning or (is_english_only and len(line) > 20):
+            
+            # reasoning 패턴이 명확한 경우만 제거
+            if is_reasoning:
                 continue
             
-            if has_korean or not is_english_only:
-                cleaned_lines.append(line)
+            # 영어만 있는 경우도 너무 길지 않으면 유지 (예: "The medicine info lists 가스디알정50밀리그램")
+            if is_english_only and len(line) > 100:
+                continue
+            
+            cleaned_lines.append(line)
         
-        return '\n'.join(cleaned_lines).strip()
+        result = '\n'.join(cleaned_lines).strip()
+        
+        # 결과가 비어있으면 원본 텍스트 반환 (최소한 뭔가는 파싱 시도)
+        if not result:
+            return text.strip()
+        
+        return result
 
     def _build_question_answer_prompt(
         self,
@@ -285,20 +311,25 @@ Output format: Each line should be "Q: [question]\nA: [answer]" (one pair per li
                     current_a = None
                 continue
             
-            # 질문 시작
-            if line.startswith("Q:") or line.startswith("질문:"):
+            # 질문 시작 (더 유연한 패턴 매칭)
+            if (line.startswith("Q:") or line.startswith("질문:") or 
+                line.startswith("Q.") or line.startswith("질문.") or
+                (line.startswith("Q") and len(line) > 1 and line[1] in [':', '.', ' '])):
                 if current_q and current_a:
                     qa_pairs.append({"question": current_q, "answer": current_a})
-                current_q = line.replace("Q:", "").replace("질문:", "").strip()
+                # Q: 또는 질문: 제거
+                current_q = re.sub(r'^(Q|질문)[:.\s]+', '', line).strip()
                 current_a = None
-            # 답변 시작
-            elif line.startswith("A:") or line.startswith("답변:"):
-                current_a = line.replace("A:", "").replace("답변:", "").strip()
+            # 답변 시작 (더 유연한 패턴 매칭)
+            elif (line.startswith("A:") or line.startswith("답변:") or 
+                  line.startswith("A.") or line.startswith("답변.") or
+                  (line.startswith("A") and len(line) > 1 and line[1] in [':', '.', ' '])):
+                current_a = re.sub(r'^(A|답변)[:.\s]+', '', line).strip()
             # 답변 계속
             elif current_a is not None:
                 current_a += " " + line
-            # 질문 계속
-            elif current_q is not None and not line.startswith("Q:"):
+            # 질문 계속 (Q:로 시작하지 않는 경우)
+            elif current_q is not None and not (line.startswith("Q:") or line.startswith("질문:")):
                 current_q += " " + line
         
         # 마지막 쌍 추가
@@ -443,14 +474,26 @@ Output format: Each line should be "Q: [question]\nA: [answer]" (one pair per li
             
             if not generated_text:
                 logger.warning("Qwen3-VL-8B-Thinking이 빈 텍스트를 생성했습니다.")
+                logger.debug(f"API 응답 전체: {result}")
                 return []
             
+            # Thinking 부분 제거 전 원본 텍스트 로깅
+            logger.debug(f"생성된 원본 텍스트 (처음 1000자): {generated_text[:1000]}")
+            
             # Thinking 부분 제거
-            generated_text = self._clean_thinking(generated_text)
+            cleaned_text = self._clean_thinking(generated_text)
             
-            logger.debug(f"생성된 원본 텍스트 (처음 500자): {generated_text[:500]}")
+            if not cleaned_text:
+                logger.warning("Thinking 부분 제거 후 텍스트가 비어있습니다.")
+                logger.debug(f"원본 텍스트 (처음 1000자): {generated_text[:1000]}")
+                return []
             
-            qa_pairs = self._parse_qa_pairs(generated_text)
+            logger.debug(f"Thinking 제거 후 텍스트 (처음 1000자): {cleaned_text[:1000]}")
+            
+            qa_pairs = self._parse_qa_pairs(cleaned_text)
+            
+            if len(qa_pairs) == 0:
+                logger.warning(f"파싱된 질문-답변 쌍이 없습니다. 원본 텍스트 (처음 2000자): {cleaned_text[:2000]}")
 
             if len(qa_pairs) < max_qa_pairs:
                 logger.warning(f"Qwen3-VL-8B-Thinking: 생성된 질문-답변 쌍이 {max_qa_pairs}개보다 작습니다 ({len(qa_pairs)}개)")
