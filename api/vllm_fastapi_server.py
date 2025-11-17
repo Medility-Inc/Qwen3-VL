@@ -7,6 +7,7 @@ import os
 import sys
 import base64
 import logging
+import argparse
 from io import BytesIO
 from typing import List, Optional, Dict, Any, Union
 
@@ -38,6 +39,7 @@ app = FastAPI(
 # 글로벌 변수
 model: Optional[LLM] = None
 processor: Optional[AutoProcessor] = None
+current_model_name: str = "Qwen/Qwen3-VL-8B-Thinking"
 
 
 class ImageInput(BaseModel):
@@ -213,10 +215,25 @@ def build_messages(
 @app.on_event("startup")
 async def startup_event():
     """서버 시작 시 모델 로드"""
-    global model, processor
+    global model, processor, current_model_name
     try:
-        model, processor = initialize_model()
-        logger.info("서버 준비 완료")
+        # 환경 변수에서 설정 가져오기
+        model_name = os.getenv("MODEL_NAME", current_model_name)
+        current_model_name = model_name
+        
+        gpu_memory_utilization = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.90"))
+        tensor_parallel_size = os.getenv("TENSOR_PARALLEL_SIZE")
+        if tensor_parallel_size is not None:
+            tensor_parallel_size = int(tensor_parallel_size)
+        max_model_len = int(os.getenv("MAX_MODEL_LEN", "32768"))
+        
+        model, processor = initialize_model(
+            model_name=model_name,
+            gpu_memory_utilization=gpu_memory_utilization,
+            tensor_parallel_size=tensor_parallel_size,
+            max_model_len=max_model_len
+        )
+        logger.info(f"서버 준비 완료: 모델 {current_model_name}")
     except Exception as e:
         logger.error(f"모델 초기화 실패: {e}")
         raise
@@ -225,10 +242,11 @@ async def startup_event():
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """헬스체크 엔드포인트"""
+    global current_model_name
     return HealthResponse(
         status="healthy" if model is not None else "unhealthy",
         model_loaded=model is not None,
-        model_name="Qwen/Qwen3-VL-8B-Thinking"
+        model_name=current_model_name
     )
 
 
@@ -279,9 +297,10 @@ async def generate(request: GenerateRequest):
         
         logger.info(f"생성 완료: {len(generated_text)} 문자")
         
+        global current_model_name
         return GenerateResponse(
             text=generated_text,
-            model="Qwen/Qwen3-VL-8B-Thinking"
+            model=current_model_name
         )
     
     except Exception as e:
@@ -292,10 +311,11 @@ async def generate(request: GenerateRequest):
 @app.get("/")
 async def root():
     """루트 엔드포인트"""
+    global current_model_name
     return {
         "message": "Qwen3-VL vLLM Inference Server",
         "version": "1.0.0",
-        "model": "Qwen/Qwen3-VL-8B-Thinking",
+        "model": current_model_name,
         "endpoints": {
             "health": "/health",
             "generate": "/generate (POST)",
@@ -306,10 +326,62 @@ async def root():
 
 def main():
     """메인 함수"""
+    global current_model_name
+    
+    parser = argparse.ArgumentParser(description="Qwen3-VL vLLM Inference Server")
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default=os.getenv("MODEL_NAME", "Qwen/Qwen3-VL-8B-Thinking"),
+        help="사용할 모델 이름 (환경 변수 MODEL_NAME으로도 설정 가능)"
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="서버 호스트 주소"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=1119,
+        help="서버 포트 번호"
+    )
+    parser.add_argument(
+        "--gpu-memory-utilization",
+        type=float,
+        default=0.90,
+        help="GPU 메모리 사용률"
+    )
+    parser.add_argument(
+        "--tensor-parallel-size",
+        type=int,
+        default=None,
+        help="Tensor parallel 크기 (None이면 자동 감지)"
+    )
+    parser.add_argument(
+        "--max-model-len",
+        type=int,
+        default=32768,
+        help="최대 모델 길이"
+    )
+    
+    args = parser.parse_args()
+    current_model_name = args.model_name
+    
+    # 모델 초기화를 위한 설정을 환경 변수로 전달
+    os.environ["MODEL_NAME"] = args.model_name
+    os.environ["GPU_MEMORY_UTILIZATION"] = str(args.gpu_memory_utilization)
+    if args.tensor_parallel_size is not None:
+        os.environ["TENSOR_PARALLEL_SIZE"] = str(args.tensor_parallel_size)
+    os.environ["MAX_MODEL_LEN"] = str(args.max_model_len)
+    
+    logger.info(f"서버 시작: 모델={current_model_name}, 포트={args.port}")
+    
     uvicorn.run(
         app,
-        host="0.0.0.0",
-        port=1119,
+        host=args.host,
+        port=args.port,
         log_level="info"
     )
 
