@@ -26,19 +26,26 @@ logger = logging.getLogger(__name__)
 class DataCollector:
     """데이터 수집 클래스"""
     
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = "config.yaml", run_folder: Optional[Path] = None):
         """
         Args:
             config_path: 설정 파일 경로
+            run_folder: 실행 폴더 경로 (None이면 기본 경로 사용)
         """
         self.config = self._load_config(config_path)
         self.db_config = self.config["database"]
         self.data_config = self.config["data_collection"]
         self.output_config = self.config["output"]
         
-        # 이미지 저장 디렉토리
-        self.image_dir = Path(__file__).parent / self.data_config["image_dir"]
-        self.image_dir.mkdir(exist_ok=True)
+        # 실행 폴더 설정
+        self.run_folder = run_folder
+        
+        # 이미지 저장 디렉토리 (기본값, 나중에 set_run_folder로 업데이트 가능)
+        if run_folder:
+            self.image_dir = run_folder / "images"
+        else:
+            self.image_dir = Path(__file__).parent / self.data_config["image_dir"]
+        self.image_dir.mkdir(parents=True, exist_ok=True)
         
         # 사용된 이미지 추적 파일
         self.used_images_file = Path(__file__).parent / self.output_config["used_images_file"]
@@ -46,6 +53,18 @@ class DataCollector:
         
         logger.info(f"이미지 저장 디렉토리: {self.image_dir}")
         logger.info(f"사용된 이미지 수: {len(self.used_image_ids)}")
+    
+    def set_run_folder(self, run_folder: Path):
+        """
+        실행 폴더 설정 및 이미지 디렉토리 업데이트
+        
+        Args:
+            run_folder: 실행 폴더 경로
+        """
+        self.run_folder = run_folder
+        self.image_dir = run_folder / "images"
+        self.image_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"이미지 저장 디렉토리 업데이트: {self.image_dir}")
     
     def _load_config(self, config_path: str) -> Dict:
         """설정 파일 로드"""
@@ -203,8 +222,13 @@ class DataCollector:
             # 이미지 저장
             image.save(filepath, format=ext.upper())
             
-            # 상대 경로 반환
-            relative_path = f"{self.data_config['image_dir']}/{filename}"
+            # 상대 경로 반환 (실행 폴더 기준)
+            if self.run_folder:
+                # 실행 폴더 기준 상대 경로
+                relative_path = f"images/{filename}"
+            else:
+                # 기본 경로 기준 상대 경로
+                relative_path = f"{self.data_config['image_dir']}/{filename}"
             logger.debug(f"이미지 저장 완료: {relative_path}")
             return relative_path
             

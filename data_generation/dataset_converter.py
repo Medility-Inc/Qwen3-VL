@@ -6,7 +6,7 @@ Qwen3-VL 학습 형식으로 데이터를 변환합니다.
 import json
 import logging
 import random
-from typing import List, Dict
+from typing import List, Dict, Optional
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -15,16 +15,28 @@ logger = logging.getLogger(__name__)
 class DatasetConverter:
     """데이터셋 변환 클래스"""
     
-    def __init__(self, difficulty_distribution: Dict[str, float] = None):
+    def __init__(self, difficulty_distribution: Dict[str, float] = None, run_folder: Optional[Path] = None):
         """
         Args:
             difficulty_distribution: 난이도 분포 {"easy": 0.5, "medium": 0.3, "hard": 0.2}
+            run_folder: 실행 폴더 경로 (None이면 기본 경로 사용)
         """
         if difficulty_distribution is None:
             difficulty_distribution = {"easy": 0.5, "medium": 0.3, "hard": 0.2}
         
         self.difficulty_distribution = difficulty_distribution
+        self.run_folder = run_folder
         logger.info("데이터셋 변환기 초기화 완료")
+    
+    def set_run_folder(self, run_folder: Path):
+        """
+        실행 폴더 설정
+        
+        Args:
+            run_folder: 실행 폴더 경로
+        """
+        self.run_folder = run_folder
+        logger.info(f"실행 폴더 설정: {run_folder}")
     
     def _classify_difficulty(self, question: str) -> str:
         """
@@ -169,6 +181,36 @@ class DatasetConverter:
             json.dump(dataset, f, indent=2, ensure_ascii=False)
         
         logger.info(f"데이터셋 저장 완료: {output_path} ({len(dataset)}개 항목)")
+    
+    def append_to_dataset(self, new_data: List[Dict], output_path: str):
+        """
+        기존 데이터셋에 새로운 데이터를 추가
+        
+        Args:
+            new_data: 추가할 데이터 리스트
+            output_path: 출력 파일 경로
+        """
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # 기존 데이터셋 로드
+        existing_dataset = []
+        if output_file.exists():
+            try:
+                with open(output_file, 'r', encoding='utf-8') as f:
+                    existing_dataset = json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                logger.warning(f"기존 데이터셋 로드 실패: {e}, 새로 생성합니다.")
+                existing_dataset = []
+        
+        # 새 데이터 추가
+        existing_dataset.extend(new_data)
+        
+        # 저장
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(existing_dataset, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"데이터셋 추가 완료: {output_path} (기존 {len(existing_dataset) - len(new_data)}개 + 신규 {len(new_data)}개 = 총 {len(existing_dataset)}개)")
     
     def load_dataset(self, input_path: str) -> List[Dict]:
         """

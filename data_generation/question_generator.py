@@ -567,6 +567,7 @@ Now generate your {max_qa_pairs} question-answer pairs:"""
                 return []
             
             # 원본 텍스트 로깅
+            breakpoint()
             logger.info(f"생성된 원본 텍스트 (처음 500자): {generated_text[:500]}")
             logger.debug(f"생성된 원본 텍스트 전체 길이: {len(generated_text)}자")
             
