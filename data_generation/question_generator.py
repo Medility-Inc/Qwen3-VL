@@ -234,8 +234,20 @@ class QuestionGenerator:
         # 의약품 목록을 명시적으로 표시
         medicine_list_section = ""
         if medicine_names_in_list:
-            medicine_list_section = f"\n\n**Available medicines in this image (use ALL of them evenly, not just one):**\n" + "\n".join(f"- {name}" for name in medicine_names_in_list)
-            medicine_list_section += f"\n\n**IMPORTANT: Generate questions about ALL medicines evenly. Do NOT focus on only one medicine (e.g., {medicine_names_in_list[0] if medicine_names_in_list else 'one medicine'}). Distribute questions across all available medicines.**"
+            unique_medicines = list(set(medicine_names_in_list))  # 중복 제거
+            medicine_list_section = f"\n\n**Available medicines in this image (MUST use ALL of them evenly):**\n" + "\n".join(f"- {name}" for name in unique_medicines)
+            
+            if len(unique_medicines) > 1:
+                # 여러 의약품이 있는 경우
+                questions_per_medicine = max(1, max_qa_pairs // len(unique_medicines))
+                medicine_list_section += f"\n\n**CRITICAL DISTRIBUTION REQUIREMENT:**"
+                medicine_list_section += f"\n- There are {len(unique_medicines)} different medicines: {', '.join(unique_medicines)}"
+                medicine_list_section += f"\n- You MUST generate approximately {questions_per_medicine} questions about EACH medicine"
+                medicine_list_section += f"\n- DO NOT generate all {max_qa_pairs} questions about only one medicine (e.g., only {unique_medicines[0]})"
+                medicine_list_section += f"\n- Example distribution: {unique_medicines[0]} ({questions_per_medicine} questions), {unique_medicines[1] if len(unique_medicines) > 1 else 'other'} ({questions_per_medicine} questions), etc."
+            else:
+                # 하나의 의약품만 있는 경우
+                medicine_list_section += f"\n\n**NOTE: Only one medicine ({unique_medicines[0]}) is in the list, but you should still generate diverse questions about it and include many negative sample questions about other medicines.**"
         
         prompt = f"""You are an expert at analyzing medicine blister pack images and generating VQA question-answer pairs.
 
@@ -256,7 +268,11 @@ Generate {max_qa_pairs} question-answer pairs that satisfy all conditions below:
    - Questions about the blister pack's packaging form (약포 포장 형태)
    - Questions about the blister pack's design or markings (약포 디자인이나 표시)
    - Focus only on the medicines (알약/의약품) inside the blister pack, not the packaging itself.
-4. **CRITICAL: Use ALL medicines evenly in your questions. If there are multiple medicines in the medicine information list, generate questions about EACH medicine, not just one. Distribute questions across all available medicines to ensure balanced coverage.**
+4. **CRITICAL: Use ALL medicines evenly in your questions. If there are multiple medicines in the medicine information list, you MUST generate questions about EACH medicine, not just one.**
+   - If there are 2 medicines, generate roughly equal numbers of questions about each (e.g., 5 questions about medicine A, 5 questions about medicine B)
+   - If there are 3 medicines, distribute questions evenly (e.g., 3-4 questions about each)
+   - DO NOT generate 10 questions all about the same medicine. This is STRICTLY FORBIDDEN.
+   - Each medicine should have questions covering different aspects: existence, counting, color, shape, ingredients, etc.
 5. **IMPORTANT: Do NOT directly mention printing/marking information (각인/인쇄 정보) in answers. Use printing/marking information ONLY for identifying which medicine it is, but do not explicitly describe the printing details in the answer. For example:**
    - BAD: "뒷면에 삼각형과 숫자 2.5로 보이는 인쇄가 반복되어 있습니다. 제공된 의약품 정보에 따르면 카사반정 2.5밀리그램은 뒷면에 삼각형 모양과 2.5 표시가 있는 것으로 되어 있어..."
    - GOOD: "이미지에서 보이는 약은 흰색 계열의 작은 원형 정제로 보입니다. 제공된 의약품 정보에 따르면 카사반정 2.5밀리그램은 원형 정제로 되어 있어, 이 포장의 약은 카사반정 2.5밀리그램으로 판단할 수 있습니다."
@@ -264,7 +280,12 @@ Generate {max_qa_pairs} question-answer pairs that satisfy all conditions below:
 6. Question-answer pair composition:
    - Basic pairs ({basic_qa_count} pairs): Questions answerable from image only (e.g., "이 약포에 의약품이 몇 개 들어가있나요?" → "이미지에서 약포 안에 들어 있는 의약품을 직접 관찰해 보니 총 4개가 확인됩니다.")
    - Extended pairs ({max_qa_pairs - basic_qa_count} pairs): Questions combining image observation + medicine information (e.g., "이 약포에 있는 라베라톤정의 주성분은 무엇인가요?" → "이 약포에 보이는 라베라톤정의 주성분은 라베프라졸 나트륨입니다.")
-7. About {negative_ratio}% of questions should be negative samples asking about medicines NOT in the medicine information list. The medicine information list contains: {', '.join(medicine_names_in_list[:10]) if medicine_names_in_list else 'none'}. For negative samples, ask about medicines that are NOT in this list. For example: "이 약포에 아스피린이 들어가 있나요?" → "아니요. 이미지에서 확인된 의약품들은 모두 제공된 의약품 정보 목록에 포함되어 있으며, 아스피린은 목록에 없습니다."
+7. **IMPORTANT: Generate many negative sample questions (약 {negative_ratio}% of total). For each medicine in the list, generate 1-2 negative sample questions asking about common medicines NOT in the list. Use these question formats:**
+   - "이 이미지에 [약명] 정제가 포함되어 있나요?"
+   - "이 약들 중 [약명] 정제가 있는지, 이미지와 제공된 약 정보 기준으로 판단해 줄 수 있나요?"
+   - "이 약포에 [약명]이 들어가 있는지, 이미지와 제공된 의약품 정보를 바탕으로 설명해 줄 수 있나요?"
+   - The medicine information list contains: {', '.join(medicine_names_in_list[:10]) if medicine_names_in_list else 'none'}
+   - For negative samples, ask about common medicines NOT in this list (e.g., 타이레놀, 이부프로펜, 아스피린, 파라세타몰, 아목시실린, 세파클러, 로키소닌, 게보린, 부루펜, 케토톱, 아세트아미노펜, 나프록센, 디클로페낙, 멜록시캠, 셀레콕시브, etc.)
 8. Questions should cover various aspects: existence/counting/color/shape/location/etc.
 9. Each question should be a single line ending with '?', and each answer should be 2-4 sentences in Korean.
 
@@ -280,18 +301,59 @@ Generate {max_qa_pairs} question-answer pairs that satisfy all conditions below:
   A: "이미지에서 보이는 약은 흰색 계열의 작은 원형 정제로 보입니다. 제공된 의약품 정보에 따르면 카사반정 2.5밀리그램은 원형 정제로 되어 있어, 이 포장의 약은 카사반정 2.5밀리그램으로 판단할 수 있습니다."
   (Note: Do NOT mention printing/marking details like "뒷면에 삼각형과 숫자 2.5로 보이는 인쇄" in the answer. Use printing information only for identification, not for description.)
 
-**Examples of using multiple medicines evenly (if multiple medicines exist):**
-- If medicines include "가스디알정" and "카사반정", generate questions about BOTH:
-  - Q: "이 약포에 가스디알정이 들어가 있나요?"
-  - Q: "이 약포에 카사반정의 주성분은 무엇인가요?"
-  - Q: "이 약포에 가스디알정과 카사반정 중 어떤 것이 더 많은가요?"
-- Do NOT generate all questions about only one medicine (e.g., only 카사반정).
+**Examples of using multiple medicines evenly (if multiple medicines exist) - THIS IS MANDATORY:**
+- If medicines include "가스디알정" and "카사반정", you MUST generate questions about BOTH:
+  - 가스디알정 관련 질문들 (약 절반):
+    - Q: "이 약포에 가스디알정이 들어가 있나요?"
+    - Q: "이 약포에 가스디알정의 주성분은 무엇인가요?"
+    - Q: "이 약포에 가스디알정이 몇 개 있나요?"
+    - Q: "이 약포에 가스디알정의 색상은 무엇인가요?"
+  - 카사반정 관련 질문들 (약 절반):
+    - Q: "이 약포에 카사반정이 들어가 있나요?"
+    - Q: "이 약포에 카사반정의 주성분은 무엇인가요?"
+    - Q: "이 약포에 카사반정이 몇 개 있나요?"
+    - Q: "이 약포에 카사반정의 형태는 무엇인가요?"
+  - 비교 질문:
+    - Q: "이 약포에 가스디알정과 카사반정 중 어떤 것이 더 많은가요?"
+- **STRICTLY FORBIDDEN: Generating all 10 questions about only one medicine (e.g., only 가스디알정 or only 카사반정). This will result in rejection.**
 
-**Negative sample examples (medicine NOT in the list):**
-- Q: "이 약포에 아스피린이 들어가 있나요?"
-  A: "아니요. 이미지에서 확인된 의약품들은 모두 제공된 의약품 정보 목록에 포함되어 있으며, 아스피린은 목록에 없습니다."
+**Negative sample examples (medicine NOT in the list) - GENERATE MANY OF THESE:**
+- Q: "이 이미지에 타이레놀 정제가 포함되어 있나요?"
+  A: "사진에서 보이는 약들은 모두 흰색 계열의 원형, 타원형 정제와 캡슐로 구성되어 있습니다. 제공된 목록에는 타이레놀 성분의 약이 없고, 모양과 정보로 보아 이 이미지에는 타이레놀 정제는 포함되어 있지 않습니다."
 
-Output format: Each line should be "Q: [question]\nA: [answer]" (one pair per line)."""
+- Q: "이 약들 중 이부프로펜 정제가 있는지, 이미지와 제공된 약 정보 기준으로 판단해 줄 수 있나요?"
+  A: "사진 속 약들은 카바스타정, 위제로츄어블정, 한림알프라졸람정, 유니테론정, 코시바정, 류멜캡슐, 피나스틴정, 자누다움엠정으로 구성된 것으로 보입니다. 의약품 정보 목록에도 이부프로펜 제제는 포함되어 있지 않으므로, 이 이미지에는 이부프로펜 정제가 없는 것으로 판단됩니다."
+
+- Q: "이 약포에 아스피린 정제가 들어 있는지, 이미지와 제공된 의약품 정보를 바탕으로 설명해 줄 수 있나요?"
+  A: "이미지에서 보이는 약포는 카사반정 2.5밀리그램의 포장과 인쇄 양식이 일치하며, 제공된 정보에도 카사반정과 가스디알정만 언급되어 있습니다. 아스피린 정제에 대한 언급은 없고, 포장 표기에서도 아스피린을 나타내는 표시가 보이지 않습니다. 따라서 이 약포에는 아스피린 정제가 포함되어 있지 않은 것으로 판단됩니다."
+
+**IMPORTANT: Generate multiple negative sample questions for each image. Use different common medicine names (타이레놀, 이부프로펜, 아스피린, 파라세타몰, 아목시실린, 게보린, 부루펜, 케토톱, 아세트아미노펜, 나프록센, 디클로페낙, 멜록시캠, 셀레콕시브, 로키소닌, 세파클러, etc.) that are NOT in the medicine information list.**
+
+**OUTPUT FORMAT - START IMMEDIATELY WITHOUT ANY THINKING OR EXPLANATION:**
+
+Q: [질문 내용]
+A: [답변 내용]
+
+Q: [질문 내용]
+A: [답변 내용]
+
+(Repeat for all {max_qa_pairs} pairs)
+
+**CRITICAL INSTRUCTIONS:**
+1. DO NOT write any thinking, reasoning, or explanation before the first Q:
+2. DO NOT repeat the prompt or examples
+3. START your response directly with "Q:" followed by the first question
+4. Generate {max_qa_pairs} question-answer pairs immediately
+5. Use Korean only for questions and answers
+
+Example of correct output format:
+Q: 이 약포에 의약품이 몇 개 들어가있나요?
+A: 이미지에서 약포 안에 들어 있는 의약품을 직접 관찰해 보니 총 4개가 확인됩니다.
+
+Q: 이 약포에 가스디알정이 들어가 있나요?
+A: 네, 이미지에서 확인된 흰색 원형 정제가 가스디알정으로 보입니다.
+
+Now generate your {max_qa_pairs} question-answer pairs:"""
 
         return prompt
 
@@ -312,25 +374,48 @@ Output format: Each line should be "Q: [question]\nA: [answer]" (one pair per li
                 continue
             
             # 질문 시작 (더 유연한 패턴 매칭)
-            if (line.startswith("Q:") or line.startswith("질문:") or 
-                line.startswith("Q.") or line.startswith("질문.") or
-                (line.startswith("Q") and len(line) > 1 and line[1] in [':', '.', ' '])):
+            # Q:, Q., Q , 질문:, 질문., 질문 등 다양한 형식 지원
+            question_pattern = re.match(r'^(Q|질문)[:.\s]+(.+)', line, re.IGNORECASE)
+            if question_pattern:
                 if current_q and current_a:
                     qa_pairs.append({"question": current_q, "answer": current_a})
-                # Q: 또는 질문: 제거
-                current_q = re.sub(r'^(Q|질문)[:.\s]+', '', line).strip()
+                current_q = question_pattern.group(2).strip()
                 current_a = None
+                continue
+            
             # 답변 시작 (더 유연한 패턴 매칭)
-            elif (line.startswith("A:") or line.startswith("답변:") or 
-                  line.startswith("A.") or line.startswith("답변.") or
-                  (line.startswith("A") and len(line) > 1 and line[1] in [':', '.', ' '])):
-                current_a = re.sub(r'^(A|답변)[:.\s]+', '', line).strip()
+            # A:, A., A , 답변:, 답변., 답변 등 다양한 형식 지원
+            answer_pattern = re.match(r'^(A|답변)[:.\s]+(.+)', line, re.IGNORECASE)
+            if answer_pattern:
+                current_a = answer_pattern.group(2).strip()
+                continue
+            
+            # 한글로 시작하는 질문 패턴 (예: "이 약포에...", "이미지에...")
+            if current_q is None and current_a is None:
+                # 한글로 시작하고 물음표로 끝나는 경우 질문으로 간주
+                if re.search(r'[가-힣]', line) and line.endswith('?'):
+                    current_q = line
+                    continue
+            
             # 답변 계속
-            elif current_a is not None:
+            if current_a is not None:
                 current_a += " " + line
             # 질문 계속 (Q:로 시작하지 않는 경우)
-            elif current_q is not None and not (line.startswith("Q:") or line.startswith("질문:")):
-                current_q += " " + line
+            elif current_q is not None:
+                # 다음 질문이 시작되는 경우 (Q: 또는 한글 질문 패턴)
+                if (re.match(r'^(Q|질문)[:.\s]+', line, re.IGNORECASE) or 
+                    (re.search(r'[가-힣]', line) and line.endswith('?') and len(line) > 10)):
+                    # 현재 쌍 저장
+                    if current_q and current_a:
+                        qa_pairs.append({"question": current_q, "answer": current_a})
+                    # 새 질문 시작
+                    if re.match(r'^(Q|질문)[:.\s]+', line, re.IGNORECASE):
+                        current_q = re.sub(r'^(Q|질문)[:.\s]+', '', line, flags=re.IGNORECASE).strip()
+                    else:
+                        current_q = line
+                    current_a = None
+                else:
+                    current_q += " " + line
         
         # 마지막 쌍 추가
         if current_q and current_a:
@@ -373,7 +458,8 @@ Output format: Each line should be "Q: [question]\nA: [answer]" (one pair per li
 - Generate questions and answers in Korean only.
 - Questions must be image-centered.
 - DO NOT generate questions about the blister pack (약포/약폼) itself, such as questions about the blister pack's backside printing, packaging form, or design. Focus only on the medicines (알약/의약품) inside the blister pack.
-- CRITICAL: Use ALL medicines evenly in your questions. If there are multiple medicines in the medicine information list, generate questions about EACH medicine, not just one. Distribute questions across all available medicines to ensure balanced coverage.
+- CRITICAL: Use ALL medicines evenly in your questions. If there are multiple medicines in the medicine information list, you MUST generate questions about EACH medicine, not just one. DO NOT generate all questions about only one medicine - this is STRICTLY FORBIDDEN. Distribute questions evenly across all available medicines.
+- IMPORTANT: Generate MANY negative sample questions (asking about medicines NOT in the list). Use question formats like "이 이미지에 [약명] 정제가 포함되어 있나요?" or "이 약들 중 [약명] 정제가 있는지, 이미지와 제공된 약 정보 기준으로 판단해 줄 수 있나요?". Use common medicine names like 타이레놀, 이부프로펜, 아스피린, 파라세타몰, 아목시실린, 게보린, 부루펜, 케토톱, 아세트아미노펜, 나프록센, 디클로페낙, 멜록시캠, 셀레콕시브, 로키소닌, 세파클러, etc.
 - IMPORTANT: Do NOT directly mention printing/marking information (각인/인쇄 정보) in answers. Use printing/marking information ONLY for identifying which medicine it is, but do not explicitly describe the printing details in the answer. Focus on visible characteristics like color, shape, size instead.
 - Answers should be 2-4 sentences in Korean, focusing on image observations first, then supplementing with medicine information when needed."""
 
@@ -446,6 +532,8 @@ Output format: Each line should be "Q: [question]\nA: [answer]" (one pair per li
 
         try:
             # Qwen3-VL API 호출
+            # Thinking 모델이 긴 reasoning을 생성할 수 있으므로 max_tokens를 늘림
+            max_tokens_for_qa = max(self.api_config["qwen3vl"]["max_tokens"], 4096)
             payload = {
                 "text": prompt,
                 "images": [
@@ -454,10 +542,11 @@ Output format: Each line should be "Q: [question]\nA: [answer]" (one pair per li
                         "image": str(abs_image_path)
                     }
                 ],
-                "max_tokens": self.api_config["qwen3vl"]["max_tokens"],
+                "max_tokens": max_tokens_for_qa,
                 "temperature": self.api_config["qwen3vl"]["temperature"],
                 "top_p": self.api_config["qwen3vl"]["top_p"]
             }
+            logger.debug(f"Qwen3-VL API 호출: max_tokens={max_tokens_for_qa}")
             
             response = requests.post(
                 self.qwen3vl_url,
@@ -477,23 +566,66 @@ Output format: Each line should be "Q: [question]\nA: [answer]" (one pair per li
                 logger.debug(f"API 응답 전체: {result}")
                 return []
             
-            # Thinking 부분 제거 전 원본 텍스트 로깅
-            logger.debug(f"생성된 원본 텍스트 (처음 1000자): {generated_text[:1000]}")
+            # 원본 텍스트 로깅
+            logger.info(f"생성된 원본 텍스트 (처음 500자): {generated_text[:500]}")
+            logger.debug(f"생성된 원본 텍스트 전체 길이: {len(generated_text)}자")
             
-            # Thinking 부분 제거
-            cleaned_text = self._clean_thinking(generated_text)
+            # Thinking 부분이 있는 경우, 실제 질문-답변 부분만 추출 시도
+            # 프롬프트 예시 키워드 제거 (예시는 제외)
+            lines = generated_text.split('\n')
             
-            if not cleaned_text:
-                logger.warning("Thinking 부분 제거 후 텍스트가 비어있습니다.")
-                logger.debug(f"원본 텍스트 (처음 1000자): {generated_text[:1000]}")
-                return []
+            # 프롬프트 예시 패턴 제거 (예: "**Examples of...", "**Negative sample examples..." 등)
+            example_keywords = [
+                "**Examples of", "**Negative sample examples", "**Basic question-answer examples",
+                "**Extended question-answer examples", "Example format:", "Output format:",
+                "**CRITICAL:", "**IMPORTANT:", "**NOTE:", "STRICTLY FORBIDDEN"
+            ]
             
-            logger.debug(f"Thinking 제거 후 텍스트 (처음 1000자): {cleaned_text[:1000]}")
+            # 실제 질문-답변 시작 지점 찾기
+            qa_start_idx = None
+            for idx, line in enumerate(lines):
+                stripped = line.strip()
+                
+                # 프롬프트 예시 부분은 건너뛰기
+                if any(keyword in stripped for keyword in example_keywords):
+                    continue
+                
+                # Q: 또는 A:로 시작하는지 확인
+                if (stripped.startswith("Q:") or stripped.startswith("A:") or 
+                    stripped.startswith("질문:") or stripped.startswith("답변:")):
+                    # 프롬프트 예시가 아닌지 확인
+                    content_after_prefix = stripped[2:].strip() if stripped.startswith("Q:") or stripped.startswith("A:") else stripped[3:].strip()
+                    
+                    # 한글이 포함되어 있고, 따옴표로 시작하지 않으며, "이 약포에" 같은 실제 질문 패턴이면 실제 질문으로 간주
+                    if (re.search(r'[가-힣]', content_after_prefix) and 
+                        not content_after_prefix.startswith('"') and
+                        not content_after_prefix.startswith("이 약포에 가스디알정이 들어가 있나요?") and  # 예시 제외
+                        len(content_after_prefix) > 5):  # 너무 짧으면 예시일 가능성
+                        qa_start_idx = idx
+                        logger.info(f"질문-답변 시작 라인 발견: {idx}번째 라인")
+                        logger.info(f"라인 내용: {stripped[:150]}")
+                        # 주변 라인도 확인
+                        if idx > 0:
+                            logger.debug(f"이전 라인: {lines[idx-1].strip()[:100]}")
+                        if idx < len(lines) - 1:
+                            logger.debug(f"다음 라인: {lines[idx+1].strip()[:100]}")
+                        break
             
-            qa_pairs = self._parse_qa_pairs(cleaned_text)
+            # 질문-답변 부분이 발견되면 그 부분부터 파싱
+            if qa_start_idx is not None:
+                qa_text = '\n'.join(lines[qa_start_idx:])
+                logger.info(f"질문-답변 부분 추출 (처음 1500자): {qa_text[:1500]}")
+                qa_pairs = self._parse_qa_pairs(qa_text)
+            else:
+                # Q: 또는 A:를 찾지 못한 경우, 한글로 시작하고 ?로 끝나는 라인을 찾아서 파싱 시도
+                logger.warning("Q: 또는 A:로 시작하는 실제 질문-답변 라인을 찾지 못했습니다.")
+                logger.warning("한글 질문 패턴으로 파싱 시도...")
+                qa_pairs = self._parse_qa_pairs(generated_text)
             
             if len(qa_pairs) == 0:
-                logger.warning(f"파싱된 질문-답변 쌍이 없습니다. 원본 텍스트 (처음 2000자): {cleaned_text[:2000]}")
+                logger.warning(f"파싱된 질문-답변 쌍이 없습니다.")
+                logger.warning(f"원본 텍스트 (처음 3000자): {generated_text[:3000]}")
+                logger.warning(f"원본 텍스트 (마지막 1000자): {generated_text[-1000:] if len(generated_text) > 1000 else generated_text}")
 
             if len(qa_pairs) < max_qa_pairs:
                 logger.warning(f"Qwen3-VL-8B-Thinking: 생성된 질문-답변 쌍이 {max_qa_pairs}개보다 작습니다 ({len(qa_pairs)}개)")

@@ -102,7 +102,18 @@ class DatasetGenerator:
                     logger.info(f"  - 질문-답변 쌍 수 제한 적용: 총 {max_total}개로 제한")
             
             logger.info(f"  - GPT-5.1: {len(gpt_qa_pairs)}개 질문-답변 쌍 생성")
+            if gpt_qa_pairs:
+                logger.info("  GPT-5.1 생성 질문-답변 쌍:")
+                for idx, qa in enumerate(gpt_qa_pairs, 1):
+                    logger.info(f"    [{idx}] Q: {qa.get('question', 'N/A')}")
+                    logger.info(f"        A: {qa.get('answer', 'N/A')[:200]}{'...' if len(qa.get('answer', '')) > 200 else ''}")
+            
             logger.info(f"  - Qwen3-VL-8B-Thinking: {len(qwen_qa_pairs)}개 질문-답변 쌍 생성")
+            if qwen_qa_pairs:
+                logger.info("  Qwen3-VL-8B-Thinking 생성 질문-답변 쌍:")
+                for idx, qa in enumerate(qwen_qa_pairs, 1):
+                    logger.info(f"    [{idx}] Q: {qa.get('question', 'N/A')}")
+                    logger.info(f"        A: {qa.get('answer', 'N/A')[:200]}{'...' if len(qa.get('answer', '')) > 200 else ''}")
             
             if not gpt_qa_pairs and not qwen_qa_pairs:
                 logger.warning("생성된 질문-답변 쌍이 없습니다.")
