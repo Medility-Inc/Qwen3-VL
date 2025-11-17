@@ -1,0 +1,31 @@
+[project]
+name = "qwen3-vl-fastapi-server"
+version = "1.0.0"
+description = "vLLM FastAPI Inference Server for Qwen3-VL-8B-Thinking"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.0.0",
+    "vllm>=0.6.0",
+    "torch>=2.0.0",
+    "transformers>=4.37.0",
+    "pillow>=10.0.0",
+    "torchvision>=0.15.0",
+    "requests>=2.31.0",
+    "numpy>=1.24.0",
+]
+
+[project.scripts]
+start-server = "vllm_fastapi_server:main"
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["vllm_fastapi_server"]
+
+[tool.uv]
+dev-dependencies = []
+
