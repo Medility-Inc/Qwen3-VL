@@ -533,7 +533,7 @@ Now generate your {max_qa_pairs} question-answer pairs:"""
         try:
             # Qwen3-VL API 호출
             # Thinking 모델이 긴 reasoning을 생성할 수 있으므로 max_tokens를 늘림
-            max_tokens_for_qa = max(self.api_config["qwen3vl"]["max_tokens"], 4096)
+            max_tokens_for_qa = max(self.api_config["qwen3vl"]["max_tokens"], 8192)
             payload = {
                 "text": prompt,
                 "images": [
@@ -567,8 +567,7 @@ Now generate your {max_qa_pairs} question-answer pairs:"""
                 return []
             
             # 원본 텍스트 로깅
-            breakpoint()
-            logger.info(f"생성된 원본 텍스트 (처음 500자): {generated_text[:500]}")
+            logger.debug(f"생성된 원본 텍스트 (처음 500자): {generated_text[:500]}")
             logger.debug(f"생성된 원본 텍스트 전체 길이: {len(generated_text)}자")
             
             # Thinking 부분이 있는 경우, 실제 질문-답변 부분만 추출 시도
@@ -615,7 +614,7 @@ Now generate your {max_qa_pairs} question-answer pairs:"""
             # 질문-답변 부분이 발견되면 그 부분부터 파싱
             if qa_start_idx is not None:
                 qa_text = '\n'.join(lines[qa_start_idx:])
-                logger.info(f"질문-답변 부분 추출 (처음 1500자): {qa_text[:1500]}")
+                logger.debug(f"질문-답변 부분 추출 (처음 1500자): {qa_text[:1500]}")
                 qa_pairs = self._parse_qa_pairs(qa_text)
             else:
                 # Q: 또는 A:를 찾지 못한 경우, 한글로 시작하고 ?로 끝나는 라인을 찾아서 파싱 시도
