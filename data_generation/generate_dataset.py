@@ -292,7 +292,7 @@ class DatasetGenerator:
         checkpoint_dir.mkdir(exist_ok=True)
         
         for idx, data_item in enumerate(collected_data, 1):
-            logger.info(f"\n[{idx}/{len(collected_data)}] 이미지 처리 중...")
+            logger.info(f"[{idx}/{len(collected_data)}] 이미지 처리 중...")
             
             # 이미지 경로를 실행 폴더 기준 절대 경로로 변환
             relative_image_path = data_item["image_path"]

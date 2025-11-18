@@ -90,54 +90,82 @@ class QuestionGenerator:
             return yaml.safe_load(f)
     
     def _build_medicine_context(self, medicine_info: List[Dict]) -> str:
-        """의약품 정보를 컨텍스트 문자열로 변환"""
+        """의약품 정보를 컨텍스트 문자열로 변환 (질문 생성용 간결 버전)"""
         if not medicine_info:
             return "의약품 정보가 없습니다."
+        
         context_parts = []
+        max_context_length = 5000  # 최대 컨텍스트 길이 제한 (문자 수)
+        current_length = 0
+        
         for med in medicine_info:
             parts = []
+            # 기본 정보 (간결하게)
             if med.get("item_name"):
                 parts.append(f"품명: {med['item_name']}")
-            if med.get("onesglobal_item_name"):
-                parts.append(f"국제명: {med['onesglobal_item_name']}")
-            if med.get("onesglobal_material_name"):
-                parts.append(f"재질/소재: {med['onesglobal_material_name']}")
-            if med.get("onesglobal_ingredient_ko"):
-                parts.append(f"성분: {med['onesglobal_ingredient_ko']}")
 
+            # 형태 정보 (시각적으로 확인 가능)
             shape_parts = []
             if med.get("drug_shape"):
                 shape_parts.append(med["drug_shape"])
-            if med.get("onesglobal_form_type"):
-                shape_parts.append(med["onesglobal_form_type"])
-            if shape_parts:
-                parts.append(f"제형/형태: {', '.join(shape_parts)}")
             if med.get("form_code_name"):
-                parts.append(f"형태 코드: {med['form_code_name']}")
+                shape_parts.append(med["form_code_name"])
+            if shape_parts:
+                parts.append(f"형태: {', '.join(shape_parts)}")
+            
+            # 크기 정보 (시각적으로 확인 가능)
+            size_parts = []
             if med.get("thick"):
-                parts.append(f"두께: {med['thick']}")
-
-            if med.get("onesglobal_route"):
-                parts.append(f"투여 경로: {med['onesglobal_route']}")
-            if med.get("onesglobal_indication"):
-                parts.append(f"효능/효과: {med['onesglobal_indication']}")
-            if med.get("onesglobal_ethical_type"):
-                parts.append(f"의약분류: {med['onesglobal_ethical_type']}")
-            if med.get("onesglobal_storage"):
-                parts.append(f"보관 방법: {med['onesglobal_storage']}")
-            if med.get("onesglobal_valid_term"):
-                parts.append(f"유효기간: {med['onesglobal_valid_term']}")
-            if med.get("onesglobal_pack_unit"):
-                parts.append(f"포장 단위: {med['onesglobal_pack_unit']}")
+                size_parts.append(f"두께:{med['thick']}")
+            if med.get("length_long"):
+                size_parts.append(f"장축:{med['length_long']}")
+            if med.get("length_short"):
+                size_parts.append(f"단축:{med['length_short']}")
+            if size_parts:
+                parts.append("크기:" + "|".join(size_parts))
+            
+            # 색상 정보 (시각적으로 확인 가능)
+            color_parts = []
+            if med.get("color_front"):
+                color_parts.append(med["color_front"])
+            if med.get("color_back"):
+                color_parts.append(med["color_back"])
+            if color_parts:
+                parts.append(f"색상:{','.join(color_parts)}")
+            
+            # 인쇄 정보 (시각적으로 확인 가능, 짧게)
+            print_parts = []
             if med.get("print_front"):
-                parts.append(f"앞면 인쇄: {med['print_front']}")
+                print_val = str(med['print_front'])[:50]  # 최대 50자로 제한
+                print_parts.append(f"앞면:{print_val}")
             if med.get("print_back"):
-                parts.append(f"뒷면 인쇄: {med['print_back']}")
+                print_val = str(med['print_back'])[:50]  # 최대 50자로 제한
+                print_parts.append(f"뒷면:{print_val}")
+            if print_parts:
+                parts.append("|".join(print_parts))
 
-            if parts:
-                context_parts.append(" | ".join(parts))
+            # 질문 생성에 필요한 핵심 정보만 포함 (효능/효과, 용법/용량, 주의사항 등 긴 텍스트 제외)
+            med_context = " | ".join(parts)
+            
+            # 길이 체크
+            if current_length + len(med_context) > max_context_length:
+                # 남은 공간만큼만 추가
+                remaining = max_context_length - current_length
+                if remaining > 100:  # 최소 100자 이상 남았을 때만 추가
+                    med_context = med_context[:remaining] + "..."
+                    context_parts.append(med_context)
+                break
+            
+            context_parts.append(med_context)
+            current_length += len(med_context) + 1  # +1 for newline
 
-        return "\n".join(context_parts) if context_parts else "의약품 정보가 없습니다."
+        result = "\n".join(context_parts) if context_parts else "의약품 정보가 없습니다."
+        
+        # 최종 길이 제한 (안전장치)
+        if len(result) > max_context_length:
+            result = result[:max_context_length] + "\n...(의약품 정보가 길어 일부 생략됨)"
+        
+        return result
 
     def _clean_thinking(self, text: str) -> str:
         """Qwen3-VL Thinking 모델의 thinking 부분 제거"""
@@ -219,117 +247,205 @@ class QuestionGenerator:
         negative_ratio: int,
         basic_qa_count: int,
         exclude_questions: List[str] = None,
-        medicine_info: List[Dict] = None
+        medicine_info: List[Dict] = None,
+        llm_type: str = "gpt5.1",
     ) -> str:
-        """질문-답변 쌍 생성 프롬프트 (영어)"""
+        """GPT‑5.1 스타일의 고품질 질문-답변 생성 프롬프트 (GPT / Qwen 공용)
+
+        - 프롬프트는 영어, 생성되는 질문/답변은 한국어.
+        - 최대 10개 QA, 기본 목표는 10개 생성 시 '긍정형 7개 / 부정형 3개'.
+        - Qwen3-VL은 GPT-5.1이 이미 생성한 질문(exclude_questions)을 피해서 다른 질문을 생성.
+        """
+
+        # 현재 구현에서는 negative_ratio, basic_qa_count는 직접 사용하지 않지만
+        # 프롬프트 정책 확장을 위해 시그니처에 유지한다.
+        _ = (negative_ratio, basic_qa_count)
+
+        # 제외할 질문들 섹션 (Qwen이 GPT 질문을 피하도록 사용)
         exclude_section = ""
         if exclude_questions:
-            exclude_section = f"\n\nExclude these questions (do not generate similar ones):\n" + "\n".join(f"- {q}" for q in exclude_questions[:10])
-        
-        # Get medicine names for negative samples
-        medicine_names_in_list = []
-        if medicine_info:
-            medicine_names_in_list = [med.get("item_name", "") for med in medicine_info if med.get("item_name")]
-        
-        # 의약품 목록을 명시적으로 표시
-        medicine_list_section = ""
-        if medicine_names_in_list:
-            unique_medicines = list(set(medicine_names_in_list))  # 중복 제거
-            medicine_list_section = f"\n\n**Available medicines in this image (MUST use ALL of them evenly):**\n" + "\n".join(f"- {name}" for name in unique_medicines)
-            
-            if len(unique_medicines) > 1:
-                # 여러 의약품이 있는 경우
-                questions_per_medicine = max(1, max_qa_pairs // len(unique_medicines))
-                medicine_list_section += f"\n\n**CRITICAL DISTRIBUTION REQUIREMENT:**"
-                medicine_list_section += f"\n- There are {len(unique_medicines)} different medicines: {', '.join(unique_medicines)}"
-                medicine_list_section += f"\n- You MUST generate approximately {questions_per_medicine} questions about EACH medicine"
-                medicine_list_section += f"\n- DO NOT generate all {max_qa_pairs} questions about only one medicine (e.g., only {unique_medicines[0]})"
-                medicine_list_section += f"\n- Example distribution: {unique_medicines[0]} ({questions_per_medicine} questions), {unique_medicines[1] if len(unique_medicines) > 1 else 'other'} ({questions_per_medicine} questions), etc."
-            else:
-                # 하나의 의약품만 있는 경우
-                medicine_list_section += f"\n\n**NOTE: Only one medicine ({unique_medicines[0]}) is in the list, but you should still generate diverse questions about it and include many negative sample questions about other medicines.**"
-        
-        prompt = f"""You are an expert at analyzing medicine blister pack images and generating VQA question-answer pairs.
+            exclude_section = (
+                "\n\nPreviously generated questions (MUST NOT be repeated or paraphrased):\n"
+                + "\n".join(f"- {q}" for q in exclude_questions[:20])
+            )
 
-Medicine information (reference only, use as supplementary):
+        # 의약품 이름 목록
+        medicine_names_in_list: List[str] = []
+        if medicine_info:
+            medicine_names_in_list = [
+                med.get("item_name", "")
+                for med in medicine_info
+                if med.get("item_name")
+            ]
+
+        # 의약품 목록 섹션
+        medicine_list_section = ""
+        unique_medicines: List[str] = []
+        if medicine_names_in_list:
+            unique_medicines = list(set(medicine_names_in_list))
+            medicine_list_section = (
+                "\n\n**Available medicines in this image (reference list):**\n"
+                + "\n".join(f"- {name}" for name in unique_medicines)
+            )
+
+        # 공통: 최대 10개까지, 10개 이상 요청되면 10개로 클램프
+        max_pairs = min(max_qa_pairs, 10)
+
+        # 공통: 긍/부정 비율 계산 (7:3 근사)
+        if max_pairs >= 10:
+            target_total = 10
+            target_positive = 7
+            target_negative = 3
+        else:
+            target_total = max_pairs
+            target_negative = max(1, round(target_total * 0.3))
+            target_positive = max(1, target_total - target_negative)
+
+        # Explicit print for debug: Show the 3 core sections (remove in production)
+        logger.info("=== medicine_context ===")
+        logger.info(medicine_context)
+        logger.info("=== medicine_list_section ===")
+        logger.info(medicine_list_section)
+        logger.info("=== exclude_section ===")
+        logger.info(exclude_section)
+
+        # 공통 설명 블록 (GPT / Qwen 둘 다 공유)
+        base_body = f"""You are an expert at analyzing medicine blister pack images and generating **high-quality** Korean VQA question–answer pairs for **fine-tuning**.
+
+<task_context>
+- Input:
+  - A blister pack image (tablets/capsules and their packaging)
+  - A structured medicine information list for candidate medicines in the image (NOTE: This is ONLY for dataset generation purposes. In real usage, users will ONLY provide the image, NOT the medicine information list.)
+- Goal:
+  - Generate Korean question–answer pairs that are suitable for supervised fine-tuning of a multimodal LLM.
+  - **CRITICAL**: Focus on questions that are **ambiguous or difficult for users to confirm** by themselves. Avoid questions that users can easily verify by simply looking at the image (e.g., "How many tablets that look like X are there?" - users can count them themselves).
+  - Prioritize questions that require **uncertainty reasoning** or **identification based on limited visual cues** (e.g., when imprints are not clearly visible).
+- All questions and answers must be written **only in Korean**.
+- Questions do NOT need to end with a question mark (?). Use natural Korean phrasing.
+</task_context>
+
+<input_data>
+Medicine information (reference, may include imprint, color, shape, thickness, ingredients, etc.):
 {medicine_context}
 {medicine_list_section}
 
-Image path: {image_path}
+Image path (for your reference as a mental pointer; do NOT hallucinate unseen content):
+{image_path}
 {exclude_section}
+</input_data>
 
-Generate {max_qa_pairs} question-answer pairs that satisfy all conditions below:
+<qa_requirements_core>
+1. **Number of pairs and polarity (positive vs negative)**
+   - Generate **up to {target_total} question–answer pairs** (never exceed 10).
+   - Aim for approximately **{target_positive} positive questions** and **{target_negative} negative questions**:
+     - Positive question: about medicines that are actually present or plausibly present in the image.
+     - Negative question: about medicines that are clearly **not** present in the image (e.g., common OTC drugs not in the list and not visually observed).
+   - **CRITICAL**: Avoid generating duplicate or very similar questions. Each question must be unique and cover different aspects.
 
-**Key Principles:**
-1. Questions must be image-centered. Medicine information should only be used to supplement image observations or identify specific medicines.
-2. Questions and answers must be written in Korean only. Do not use English words or abbreviations.
-3. **DO NOT generate questions about the blister pack (약포/약폼) itself**, such as:
-   - Questions about the blister pack's backside printing (약포 뒷면 인쇄)
-   - Questions about the blister pack's packaging form (약포 포장 형태)
-   - Questions about the blister pack's design or markings (약포 디자인이나 표시)
-   - Focus only on the medicines (알약/의약품) inside the blister pack, not the packaging itself.
-4. **CRITICAL: Use ALL medicines evenly in your questions. If there are multiple medicines in the medicine information list, you MUST generate questions about EACH medicine, not just one.**
-   - If there are 2 medicines, generate roughly equal numbers of questions about each (e.g., 5 questions about medicine A, 5 questions about medicine B)
-   - If there are 3 medicines, distribute questions evenly (e.g., 3-4 questions about each)
-   - DO NOT generate 10 questions all about the same medicine. This is STRICTLY FORBIDDEN.
-   - Each medicine should have questions covering different aspects: existence, counting, color, shape, ingredients, etc.
-5. **IMPORTANT: Do NOT directly mention printing/marking information (각인/인쇄 정보) in answers. Use printing/marking information ONLY for identifying which medicine it is, but do not explicitly describe the printing details in the answer. For example:**
-   - BAD: "뒷면에 삼각형과 숫자 2.5로 보이는 인쇄가 반복되어 있습니다. 제공된 의약품 정보에 따르면 카사반정 2.5밀리그램은 뒷면에 삼각형 모양과 2.5 표시가 있는 것으로 되어 있어..."
-   - GOOD: "이미지에서 보이는 약은 흰색 계열의 작은 원형 정제로 보입니다. 제공된 의약품 정보에 따르면 카사반정 2.5밀리그램은 원형 정제로 되어 있어, 이 포장의 약은 카사반정 2.5밀리그램으로 판단할 수 있습니다."
-   - Focus on visible characteristics like color, shape, size, and use medicine information to identify the medicine, but do not mention printing/marking details in the answer.
-6. Question-answer pair composition:
-   - Basic pairs ({basic_qa_count} pairs): Questions answerable from image only (e.g., "이 약포에 의약품이 몇 개 들어가있나요?" → "이미지에서 약포 안에 들어 있는 의약품을 직접 관찰해 보니 총 4개가 확인됩니다.")
-   - Extended pairs ({max_qa_pairs - basic_qa_count} pairs): Questions combining image observation + medicine information (e.g., "이 약포에 있는 라베라톤정의 주성분은 무엇인가요?" → "이 약포에 보이는 라베라톤정의 주성분은 라베프라졸 나트륨입니다.")
-7. **IMPORTANT: Generate many negative sample questions (약 {negative_ratio}% of total). For each medicine in the list, generate 1-2 negative sample questions asking about common medicines NOT in the list. Use these question formats:**
-   - "이 이미지에 [약명] 정제가 포함되어 있나요?"
-   - "이 약들 중 [약명] 정제가 있는지, 이미지와 제공된 약 정보 기준으로 판단해 줄 수 있나요?"
-   - "이 약포에 [약명]이 들어가 있는지, 이미지와 제공된 의약품 정보를 바탕으로 설명해 줄 수 있나요?"
-   - The medicine information list contains: {', '.join(medicine_names_in_list[:10]) if medicine_names_in_list else 'none'}
-   - For negative samples, ask about common medicines NOT in this list (e.g., 타이레놀, 이부프로펜, 아스피린, 파라세타몰, 아목시실린, 세파클러, 로키소닌, 게보린, 부루펜, 케토톱, 아세트아미노펜, 나프록센, 디클로페낙, 멜록시캠, 셀레콕시브, etc.)
-8. Questions should cover various aspects: existence/counting/color/shape/location/etc.
-9. Each question should be a single line ending with '?', and each answer should be 2-4 sentences in Korean.
+2. **Question focus (ambiguous/uncertain questions first)**
+   - **PRIORITY**: Generate questions that are **ambiguous or difficult for users to confirm** by themselves. These are questions where users need AI assistance because:
+     - The imprint/marking is not clearly visible, so identification requires reasoning from color/shape/size alone.
+     - Multiple similar-looking medicines exist, making it hard to distinguish which is which.
+     - The question asks for confirmation of user's hypothesis (e.g., "I think this looks like medicine X, is it correct?").
+   - **AVOID**: Questions that users can easily verify by simply looking at the image:
+     - "How many tablets that look like X are there?" (users can count them)
+     - "What color are the tablets?" (users can see it directly)
+     - "Where are the tablets located?" (users can see it directly)
+   - **GOOD question types** (prioritize these):
+     - "Is this medicine X?" when imprint is not clearly visible (requires reasoning from shape/color/size).
+     - "Can you confirm if this is medicine X?" (user's hypothesis confirmation).
+     - "Is medicine X present in this image?" when visual identification is ambiguous.
+     - "Is there any medicine containing ingredient Y?" (requires knowledge + visual matching).
+   - **Question style**:
+     - Questions do NOT need to end with a question mark (?). Use natural Korean phrasing.
+     - Each question must be a **single-line Korean sentence**.
+     - Do NOT generate meta-questions about the dataset, training process, or this prompt itself.
 
-**Basic question-answer examples (image-centered):**
-- Q: "이 약포에 의약품이 몇 개 들어가있나요?"
-  A: "이미지에서 약포 안에 들어 있는 의약품을 직접 관찰해 보니 총 4개가 확인됩니다. 빨간색과 흰색이 조합된 캡슐, 연두색 장방형 캡슐, 흰색 원형 정제, 노란색 원형 정제로 구성되어 있으며, 각각의 형태와 색상이 명확히 구분되어 있습니다."
+3. **Positive vs negative sample design**
+   - Positive questions:
+     - Target medicines that actually exist in the image, or can be reasonably inferred from visual cues (imprint/color/shape/thickness) plus the reference list.
+     - Focus on **uncertain identification scenarios** (when imprint is unclear).
+   - Negative questions:
+     - Use **common medicine names** that are not visible in the image and preferably not in the provided medicine list.
+     - Example negative medicine names (do NOT assume they are present unless clearly visible and listed): 타이레놀, 이부프로펜, 아스피린, 파라세타몰, 아목시실린, 세파클러, 로키소닌, 게보린, 부루펜, 케토톱, 아세트아미노펜, 나프록센, 디클로페낙, 멜록시캠, 셀레콕시브, etc.
+     - For each negative question, the answer must clearly explain that the medicine is **not present in the image**, based on both the visual evidence and the reference list.
+</qa_requirements_core>
 
-**Extended question-answer examples (image + medicine info):**
-- Q: "이 약포에 있는 라베라톤정의 주성분은 무엇인가요?"
-  A: "이 약포에 보이는 라베라톤정의 주성분은 라베프라졸 나트륨입니다. 이미지에서 확인된 흰색 타원형 필름코팅정과 의약품 정보에서 '성분: 1정 중 라베프라졸 나트륨 10mg'으로 명시된 내용이 일치합니다."
+<answer_requirements_visual_reasoning>
+1. **Visual cue priority (imprint > color/shape/thickness)**
+   - When identifying a medicine in the image, use the following priority order:
+     1) Imprint (letters/numbers/logo and their placement) - **most reliable**
+     2) Color (or color combination)
+     3) Tablet/capsule shape (round, oval, oblong, etc.)
+     4) Thickness, size, and proportions
+   - In answers, whenever possible, treat **imprint information** as the most important visual cue.
 
-- Q: "이 약포에 보이는 약이 카사반정 2.5밀리그램인지, 이미지와 의약품 정보를 함께 근거로 설명해 줄 수 있나요?"
-  A: "이미지에서 보이는 약은 흰색 계열의 작은 원형 정제로 보입니다. 제공된 의약품 정보에 따르면 카사반정 2.5밀리그램은 원형 정제로 되어 있어, 이 포장의 약은 카사반정 2.5밀리그램으로 판단할 수 있습니다."
-  (Note: Do NOT mention printing/marking details like "뒷면에 삼각형과 숫자 2.5로 보이는 인쇄" in the answer. Use printing information only for identification, not for description.)
+2. **When the imprint is clearly visible and matches**
+   - If the imprint in the image **clearly matches** the imprint described in the medicine information:
+     - State confidently that the corresponding medicine **is present** in the image.
+     - Then add 1–2 more sentences giving concise key information about that medicine from the provided list, such as:
+       - Main active ingredient(s)
+       - High-level indication or use case
+       - Dosage form/strength (only if given; do not invent details).
 
-**Examples of using multiple medicines evenly (if multiple medicines exist) - THIS IS MANDATORY:**
-- If medicines include "가스디알정" and "카사반정", you MUST generate questions about BOTH:
-  - 가스디알정 관련 질문들 (약 절반):
-    - Q: "이 약포에 가스디알정이 들어가 있나요?"
-    - Q: "이 약포에 가스디알정의 주성분은 무엇인가요?"
-    - Q: "이 약포에 가스디알정이 몇 개 있나요?"
-    - Q: "이 약포에 가스디알정의 색상은 무엇인가요?"
-  - 카사반정 관련 질문들 (약 절반):
-    - Q: "이 약포에 카사반정이 들어가 있나요?"
-    - Q: "이 약포에 카사반정의 주성분은 무엇인가요?"
-    - Q: "이 약포에 카사반정이 몇 개 있나요?"
-    - Q: "이 약포에 카사반정의 형태는 무엇인가요?"
-  - 비교 질문:
-    - Q: "이 약포에 가스디알정과 카사반정 중 어떤 것이 더 많은가요?"
-- **STRICTLY FORBIDDEN: Generating all 10 questions about only one medicine (e.g., only 가스디알정 or only 카사반정). This will result in rejection.**
+3. **When the imprint is unclear or not visible (CRITICAL)**
+   - **MANDATORY**: If the imprint is not clearly visible, you MUST explicitly state that **100% certainty is not possible** and that identification is based on shape/color/size alone.
+   - **CRITICAL**: When the imprint is not visible, do NOT identify a single specific medicine. Instead, provide **3-5 candidate medicines** that match the visual characteristics (color/shape/size), and explain that without the imprint, it is difficult to determine which one it is.
+   - Example answer structures (describe in Korean when you generate):
+     - "각인이 명확하게 보이지 않아 정확히 어떤 약인지 단정하기는 어렵습니다. 다만 하얀색 작은 원형 정제의 모양과 크기로 보아 [약명1], [약명2], [약명3] 등이 가능성이 있습니다."
+     - "각인이 보이지 않아 100% 확실하게 판단할 수는 없지만, 하얀색 장방형 필름코팅정의 형태와 색상으로 보아 [약명1], [약명2], [약명3] 등이 후보가 될 수 있습니다."
+     - "각인을 확인할 수 없어 정확한 식별은 어렵습니다. 노란색 캡슐의 경우 [약명1], [약명2], [약명3], [약명4] 등 여러 약이 같은 색상과 형태를 가지고 있어, 각인 없이는 특정 약을 확정하기 어렵습니다."
+   - **NEVER** claim a single specific medicine when the imprint is not visible, even if color/shape/size match perfectly. Always provide multiple candidates (3-5 medicines) that share similar visual characteristics.
 
-**Negative sample examples (medicine NOT in the list) - GENERATE MANY OF THESE:**
-- Q: "이 이미지에 타이레놀 정제가 포함되어 있나요?"
-  A: "사진에서 보이는 약들은 모두 흰색 계열의 원형, 타원형 정제와 캡슐로 구성되어 있습니다. 제공된 목록에는 타이레놀 성분의 약이 없고, 모양과 정보로 보아 이 이미지에는 타이레놀 정제는 포함되어 있지 않습니다."
+4. **When multiple candidates overlap or no match exists**
+   - If there are many tablets with very similar color/shape/thickness so that a 1:1 mapping to a specific medicine is **not reliable**:
+     - Answer that it is **difficult to determine**, and explain briefly that several medicines look similar in the image.
+     - Example: "같은 색과 모양의 다른 약도 함께 있어 정확히 어떤 것이 [약명]인지 단정하기는 어렵습니다."
+   - If none of the visual cues in the image match the description of a specific medicine in the list:
+     - Clearly answer that the medicine **cannot be confirmed or does not appear to be present** based on this image alone.
 
-- Q: "이 약들 중 이부프로펜 정제가 있는지, 이미지와 제공된 약 정보 기준으로 판단해 줄 수 있나요?"
-  A: "사진 속 약들은 카바스타정, 위제로츄어블정, 한림알프라졸람정, 유니테론정, 코시바정, 류멜캡슐, 피나스틴정, 자누다움엠정으로 구성된 것으로 보입니다. 의약품 정보 목록에도 이부프로펜 제제는 포함되어 있지 않으므로, 이 이미지에는 이부프로펜 정제가 없는 것으로 판단됩니다."
+5. **Answer length and composition**
+   - Each answer must consist of **2–4 sentences in Korean**.
+   - At least one sentence must describe the **visual evidence** (imprint/color/shape/thickness/position/count).
+   - The remaining 1–3 sentences may incorporate relevant medicine information (ingredient/indication/dosage form), but always **ground the explanation in the image first**.
+   - Always distinguish between:
+     - Cases where presence is certain (imprint clearly visible and matches),
+     - Cases where presence is plausible but uncertain (imprint not visible, identification based on shape/color/size only), and
+     - Cases where presence cannot be confirmed or the medicine is clearly absent.
+   - **CRITICAL**: When counting tablets/capsules, be accurate. If you cannot count accurately from the image, state the uncertainty (e.g., "대략 4~5캡슐 정도" instead of claiming exact numbers).
+   - **CRITICAL**: NEVER describe visual elements (color, shape, size, count) that are NOT actually visible in the image. Only mention what you can actually see in the image. If you cannot see certain tablets/capsules clearly, state that explicitly rather than inventing descriptions.
 
-- Q: "이 약포에 아스피린 정제가 들어 있는지, 이미지와 제공된 의약품 정보를 바탕으로 설명해 줄 수 있나요?"
-  A: "이미지에서 보이는 약포는 카사반정 2.5밀리그램의 포장과 인쇄 양식이 일치하며, 제공된 정보에도 카사반정과 가스디알정만 언급되어 있습니다. 아스피린 정제에 대한 언급은 없고, 포장 표기에서도 아스피린을 나타내는 표시가 보이지 않습니다. 따라서 이 약포에는 아스피린 정제가 포함되어 있지 않은 것으로 판단됩니다."
+6. **Medicine information usage**
+   - **IMPORTANT**: The medicine information list is provided ONLY for dataset generation purposes. In real usage, users will ONLY provide the image, NOT the medicine information.
+   - In answers, do NOT explicitly mention "제공된 정보에 따르면" or "약 정보 목록에 따르면". Instead, phrase it naturally as if you are identifying from the image alone (e.g., "이미지에 보이는 [특징]으로 보아...").
+   - However, you can still use the medicine information to provide accurate ingredient/indication details in your answers, but frame it as knowledge about the identified medicine, not as reference to a provided list.
+</answer_requirements_visual_reasoning>
 
-**IMPORTANT: Generate multiple negative sample questions for each image. Use different common medicine names (타이레놀, 이부프로펜, 아스피린, 파라세타몰, 아목시실린, 게보린, 부루펜, 케토톱, 아세트아미노펜, 나프록센, 디클로페낙, 멜록시캠, 셀레콕시브, 로키소닌, 세파클러, etc.) that are NOT in the medicine information list.**
+<consistency_and_sanity_checks>
+1. **Maintain consistency within a single image (critical)**
+   - For the same image, **never make contradictory claims about the same medicine** across different Q/A pairs:
+     - Example of forbidden behavior: one Q/A says “Medicine X is not visible in this image”, while another Q/A for the same image says “Medicine X is clearly visible in this image.”
+   - For each distinct medicine in a given image, keep its status consistently as one of:
+     - (a) Clearly present,
+     - (b) Clearly absent, or
+     - (c) Cannot be determined from visual information alone.
 
-**OUTPUT FORMAT - START IMMEDIATELY WITHOUT ANY THINKING OR EXPLANATION:**
+2. **Avoid self-contradiction in imprint/shape descriptions**
+   - For tablets/capsules that obviously belong to the same visual group (same color/shape/size), do NOT produce mutually exclusive imprint descriptions, such as:
+     - First Q/A: “The imprint on these tablets looks like ‘IDG’.”
+     - Second Q/A: “The imprint on the same group of tablets looks like ‘S’.”
+   - Once you have committed to a specific imprint-based identification (or lack thereof) for a visual group, **do not contradict it** in other Q/As for the same image.
+
+3. **Avoid contradictions about capsule vs tablet presence**
+   - If one Q/A states that “only white round tablets are visible and no oblong capsules can be seen”,
+     then another Q/A for the same image must not claim that “an oblong capsule is clearly visible”.
+   - In other words, do NOT invent new visual facts that contradict earlier descriptions; keep all Q/As for the same image mutually consistent.
+</consistency_and_sanity_checks>
+
+<output_format>
+- Output **only** the question–answer pairs, nothing else.
+- Do NOT include your reasoning process, bullet lists, or summaries.
+- Format each pair exactly as:
 
 Q: [질문 내용]
 A: [답변 내용]
@@ -337,24 +453,42 @@ A: [답변 내용]
 Q: [질문 내용]
 A: [답변 내용]
 
-(Repeat for all {max_qa_pairs} pairs)
+- Do not number the questions.
+- Do not write any text before the first "Q:".
+- Generate all {target_total} pairs in this format.
+</output_format>
+"""
 
-**CRITICAL INSTRUCTIONS:**
-1. DO NOT write any thinking, reasoning, or explanation before the first Q:
-2. DO NOT repeat the prompt or examples
-3. START your response directly with "Q:" followed by the first question
-4. Generate {max_qa_pairs} question-answer pairs immediately
-5. Use Korean only for questions and answers
+        # ---------- GPT‑5.1용 프롬프트 ----------
+        if llm_type.lower().startswith("gpt"):
+            prompt = f"""{base_body}
 
-Example of correct output format:
-Q: 이 약포에 의약품이 몇 개 들어가있나요?
-A: 이미지에서 약포 안에 들어 있는 의약품을 직접 관찰해 보니 총 4개가 확인됩니다.
+<meta_guidance_for_gpt5_1>
+- You are GPT-5.1 optimized for:
+  - **High-quality, instruction-following** generation suitable for fine-tuning datasets.
+  - **Crisp but complete** answers: avoid unnecessary verbosity, but never omit key visual reasoning steps and uncertainty statements.
+- Obey the <qa_requirements_core>, <answer_requirements_visual_reasoning>, and <output_format> sections strictly.
+- Do NOT show chain-of-thought; apply the rules internally and only output final Q/A pairs.
+</meta_guidance_for_gpt5_1>
 
-Q: 이 약포에 가스디알정이 들어가 있나요?
-A: 네, 이미지에서 확인된 흰색 원형 정제가 가스디알정으로 보입니다.
+Now generate all {target_total} Korean question–answer pairs.
+"""
+            return prompt
 
-Now generate your {max_qa_pairs} question-answer pairs:"""
+        # ---------- Qwen3‑VL용 프롬프트 ----------
+        prompt = f"""{base_body}
 
+<model_specific_guidance_for_qwen3_vl>
+- You are Qwen3-VL generating **additional** question–answer pairs for the same image.
+- You MUST:
+  - Respect the list of previously generated questions shown above and **avoid repeating or paraphrasing them**.
+  - Follow all rules in <qa_requirements_core>, <answer_requirements_visual_reasoning>, and <output_format>.
+  - Start your output **directly with "Q:"** without any explanation or meta text.
+- Do NOT output any internal thinking or reasoning tags.
+</model_specific_guidance_for_qwen3_vl>
+
+Now generate all {target_total} Korean question–answer pairs.
+"""
         return prompt
 
     def _parse_qa_pairs(self, text: str) -> List[Dict[str, str]]:
@@ -451,16 +585,22 @@ Now generate your {max_qa_pairs} question-answer pairs:"""
             max_qa_pairs=max_qa_pairs,
             negative_ratio=negative_ratio,
             basic_qa_count=basic_qa_count,
-            medicine_info=medicine_info
+            medicine_info=medicine_info,
+            llm_type="gpt5.1",
         )
 
         system_prompt = """You are an expert at generating Korean VQA question-answer pairs for medicine blister pack images.
 - Generate questions and answers in Korean only.
 - Questions must be image-centered.
 - DO NOT generate questions about the blister pack (약포/약폼) itself, such as questions about the blister pack's backside printing, packaging form, or design. Focus only on the medicines (알약/의약품) inside the blister pack.
+- CRITICAL: Focus on questions that are ambiguous or difficult for users to confirm by themselves. Avoid questions that users can easily verify (e.g., counting tablets, seeing colors directly).
 - CRITICAL: Use ALL medicines evenly in your questions. If there are multiple medicines in the medicine information list, you MUST generate questions about EACH medicine, not just one. DO NOT generate all questions about only one medicine - this is STRICTLY FORBIDDEN. Distribute questions evenly across all available medicines.
-- IMPORTANT: Generate MANY negative sample questions (asking about medicines NOT in the list). Use question formats like "이 이미지에 [약명] 정제가 포함되어 있나요?" or "이 약들 중 [약명] 정제가 있는지, 이미지와 제공된 약 정보 기준으로 판단해 줄 수 있나요?". Use common medicine names like 타이레놀, 이부프로펜, 아스피린, 파라세타몰, 아목시실린, 게보린, 부루펜, 케토톱, 아세트아미노펜, 나프록센, 디클로페낙, 멜록시캠, 셀레콕시브, 로키소닌, 세파클러, etc.
-- IMPORTANT: Do NOT directly mention printing/marking information (각인/인쇄 정보) in answers. Use printing/marking information ONLY for identifying which medicine it is, but do not explicitly describe the printing details in the answer. Focus on visible characteristics like color, shape, size instead.
+- CRITICAL: Avoid generating duplicate or very similar questions. Each question must be unique.
+- IMPORTANT: Generate MANY negative sample questions (asking about medicines NOT in the list). Use question formats like "이 이미지에 [약명] 정제가 포함되어 있는지 확인해 주세요" or "이 이미지에 [약명] 정제가 포함되어 있나요". Use common medicine names like 타이레놀, 이부프로펜, 아스피린, 파라세타몰, 아목시실린, 게보린, 부루펜, 케토톱, 아세트아미노펜, 나프록센, 디클로페낙, 멜록시캠, 셀레콕시브, 로키소닌, 세파클러, etc.
+- IMPORTANT: When the imprint is not clearly visible, you MUST state that 100% certainty is not possible. Do NOT identify a single specific medicine. Instead, provide 3-5 candidate medicines that match the visual characteristics, and explain that without the imprint, it is difficult to determine which one it is. Never claim a single specific medicine when identification is based on shape/color/size alone.
+- CRITICAL: NEVER describe visual elements (color, shape, size, count, position) that are NOT actually visible in the image. Only mention what you can actually see in the image. If you cannot see certain tablets/capsules clearly, state that explicitly rather than inventing descriptions. This is a critical requirement to avoid hallucination.
+- IMPORTANT: The medicine information list is provided ONLY for dataset generation. In real usage, users will ONLY provide the image. Do NOT explicitly mention "제공된 정보에 따르면" or "약 정보 목록에 따르면" in answers. Phrase answers as if identifying from the image alone.
+- Questions do NOT need to end with a question mark (?). Use natural Korean phrasing.
 - Answers should be 2-4 sentences in Korean, focusing on image observations first, then supplementing with medicine information when needed."""
 
         try:
@@ -527,7 +667,8 @@ Now generate your {max_qa_pairs} question-answer pairs:"""
             negative_ratio=negative_ratio,
             basic_qa_count=basic_qa_count,
             exclude_questions=exclude_questions or [],
-            medicine_info=medicine_info
+            medicine_info=medicine_info,
+            llm_type="qwen3-vl",
         )
 
         try:

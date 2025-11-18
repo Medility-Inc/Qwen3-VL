@@ -5,7 +5,6 @@ database:
   host: ${DB_HOST}
   username: ${DB_USERNAME}
   password: ${DB_PASSWORD}
-  schema: "data-catalog"
   port: 3306
 
 # API 설정

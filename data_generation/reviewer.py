@@ -256,49 +256,60 @@ class Reviewer:
         
         return results
     
-    def review_with_qwen3vl(self, question: str, image_path: str, medicine_info: List[Dict]) -> Dict[str, any]:
+    def review_with_qwen3vl(self, question: str, answer: str, image_path: str, medicine_info: List[Dict]) -> Dict[str, any]:
         """
-        Qwen3-VL-8B-Thinking으로 질문 검수
+        Qwen3-VL-8B-Thinking으로 질문-답변 쌍 검수
         
         Args:
             question: 검수할 질문
+            answer: 검수할 답변
             image_path: 이미지 경로
+            medicine_info: 의약품 정보
         
         Returns:
             {"approved": bool, "reason": str, "score": float} 형식
         """
-        logger.debug(f"Qwen3-VL로 질문 검수: {question[:50]}...")
+        logger.debug(f"Qwen3-VL로 질문-답변 쌍 검수: {question[:50]}...")
         
         medicine_context = self._build_medicine_context(medicine_info)
         abs_image_path = self._resolve_image_path(image_path)
         if abs_image_path is None:
             return {"approved": False, "reason": "이미지 파일을 찾을 수 없습니다", "score": 0.0}
 
-        prompt = f"""다음 질문이 약포 이미지와 의약품 메타데이터를 참고하여 검수해주세요.
+        prompt = f"""Please review the following question-answer pair based on the medicine blister pack image and medicine metadata.
 
-이미지 경로: {image_path}
-의약품 정보:
+Image path: {image_path}
+Medicine information:
 {medicine_context}
 
-질문: {question}
+Question: {question}
 
-**검수 원칙: 기본적으로 통과시키고, 명백한 hallucination만 제외하세요.**
+Answer: {answer}
 
-다음 경우에만 NO로 판단하세요:
-1. 질문이 이미지나 의약품 정보와 명백히 모순되는 경우 (예: 이미지에 없는 의약품을 질문에서 언급)
-2. 의학적으로 심각하게 위험한 내용 (예: 잘못된 복용법, 위험한 조합)
-3. 질문이 완전히 무의미하거나 이해 불가능한 경우 (예: "asdfasdf?" 같은 랜덤 텍스트)
+**Review Principle: Generally approve, and only reject obvious hallucinations.**
 
-**다음은 통과시켜야 합니다:**
-- 질문이 약간 모호하거나 불완전한 경우
-- 질문 형식이 완벽하지 않은 경우
-- 일반적인 명확성 문제
-- 의약품 정보와 약간의 불일치 (명백한 hallucination이 아닌 경우)
+Only reject (NO) in the following cases:
+1. **CRITICAL**: The answer describes visual elements (colors, shapes, sizes, counts, positions) that are NOT actually visible in the image. For example:
+   - Answer says "white tablets are visible" but the image shows no white tablets
+   - Answer says "several round capsules" but the image shows different shapes
+   - Answer describes colors/shapes that contradict what is actually in the image
+2. The question or answer clearly contradicts the image or medicine information (e.g., mentioning medicines not in the image, incorrect counts or colors)
+3. The answer does not properly address the question
+4. Medically serious and dangerous content (e.g., incorrect dosage, dangerous combinations)
+5. The question or answer is completely meaningless or incomprehensible
 
-다음 형식으로 응답해주세요:
-APPROVED: YES 또는 NO
-SCORE: 0.0-1.0 사이의 점수
-REASON: 검수 이유 (간단히)"""
+**You should approve the following:**
+- The question or answer is slightly ambiguous or incomplete
+- The question format is not perfect
+- General clarity issues
+- Minor discrepancies with medicine information (not obvious hallucinations)
+
+**CRITICAL CHECK**: Before approving, verify that the answer only describes visual elements that are actually visible in the image. If the answer mentions colors, shapes, sizes, or counts that are not in the image, you MUST reject it (NO).
+
+Please respond in the following format:
+APPROVED: YES or NO
+SCORE: A score between 0.0-1.0
+REASON: Review reason (briefly)"""
 
         try:
             payload = {
@@ -364,13 +375,15 @@ REASON: 검수 이유 (간단히)"""
             # 오류 발생 시 기본적으로 통과 (명백한 hallucination이 아니므로)
             return {"approved": True, "reason": f"오류 발생, 기본 통과: {str(e)}", "score": 0.7}
     
-    def review_with_gpt(self, question: str, image_path: str, medicine_info: List[Dict]) -> Dict[str, any]:
+    def review_with_gpt(self, question: str, answer: str, image_path: str, medicine_info: List[Dict]) -> Dict[str, any]:
         """
-        GPT-5.1으로 질문 검수
+        GPT-5.1으로 질문-답변 쌍 검수
         
         Args:
             question: 검수할 질문
+            answer: 검수할 답변
             image_path: 이미지 경로
+            medicine_info: 의약품 정보
         
         Returns:
             {"approved": bool, "reason": str, "score": float} 형식
@@ -382,37 +395,46 @@ REASON: 검수 이유 (간단히)"""
         if abs_image_path is None:
             return {"approved": False, "reason": "이미지 파일을 찾을 수 없습니다", "score": 0.0}
 
-        prompt = f"""다음 질문이 약포 이미지와 의약품 메타데이터를 참고하여 검수해주세요.
+        prompt = f"""Please review the following question-answer pair based on the medicine blister pack image and medicine metadata.
 
-이미지 경로: {image_path}
-의약품 정보:
+Image path: {image_path}
+Medicine information:
 {medicine_context}
 
-질문: {question}
+Question: {question}
 
-**검수 원칙: 기본적으로 통과시키고, 명백한 hallucination만 제외하세요.**
+Answer: {answer}
 
-다음 경우에만 NO로 판단하세요:
-1. 질문이 이미지나 의약품 정보와 명백히 모순되는 경우 (예: 이미지에 없는 의약품을 질문에서 언급)
-2. 의학적으로 심각하게 위험한 내용 (예: 잘못된 복용법, 위험한 조합)
-3. 질문이 완전히 무의미하거나 이해 불가능한 경우 (예: "asdfasdf?" 같은 랜덤 텍스트)
+**Review Principle: Generally approve, and only reject obvious hallucinations.**
 
-**다음은 통과시켜야 합니다:**
-- 질문이 약간 모호하거나 불완전한 경우
-- 질문 형식이 완벽하지 않은 경우
-- 일반적인 명확성 문제
-- 의약품 정보와 약간의 불일치 (명백한 hallucination이 아닌 경우)
+Only reject (NO) in the following cases:
+1. **CRITICAL**: The answer describes visual elements (colors, shapes, sizes, counts, positions) that are NOT actually visible in the image. For example:
+   - Answer says "white tablets are visible" but the image shows no white tablets
+   - Answer says "several round capsules" but the image shows different shapes
+   - Answer describes colors/shapes that contradict what is actually in the image
+2. The question or answer clearly contradicts the image or medicine information (e.g., mentioning medicines not in the image, incorrect counts or colors)
+3. The answer does not properly address the question
+4. Medically serious and dangerous content (e.g., incorrect dosage, dangerous combinations)
+5. The question or answer is completely meaningless or incomprehensible
 
-다음 형식으로 응답해주세요:
-APPROVED: YES 또는 NO
-SCORE: 0.0-1.0 사이의 점수
-REASON: 검수 이유 (간단히)"""
+**You should approve the following:**
+- The question or answer is slightly ambiguous or incomplete
+- The question format is not perfect
+- General clarity issues
+- Minor discrepancies with medicine information (not obvious hallucinations)
+
+**CRITICAL CHECK**: Before approving, verify that the answer only describes visual elements that are actually visible in the image. If the answer mentions colors, shapes, sizes, or counts that are not in the image, you MUST reject it (NO).
+
+Please respond in the following format:
+APPROVED: YES or NO
+SCORE: A score between 0.0-1.0
+REASON: Review reason (briefly)"""
 
         try:
             response = self.openai_client.chat.completions.create(
                 model=self.api_config["openai"]["model"],
                 messages=[
-                    {"role": "system", "content": "당신은 VQA 질문을 검수하는 전문가입니다."},
+                    {"role": "system", "content": "You are an expert at reviewing VQA question-answer pairs."},
                     {"role": "user", "content": prompt}
                 ],
                 max_completion_tokens=512,
@@ -471,33 +493,33 @@ REASON: 검수 이유 (간단히)"""
             ]
 
         question_list = "\n".join(f"{idx + 1}. {q}" for idx, q in enumerate(questions))
-        prompt = f"""다음 질문들에 대해 약포 이미지와 의약품 메타데이터를 참고하여 검수해주세요.
+        prompt = f"""Please review the following questions based on the medicine blister pack image and medicine metadata.
 
-이미지 경로: {image_path}
-의약품 정보:
+Image path: {image_path}
+Medicine information:
 {medicine_context}
 
-질문 목록:
+Question list:
 {question_list}
 
-**검수 원칙: 기본적으로 통과시키고, 명백한 hallucination만 제외하세요.**
+**Review Principle: Generally approve, and only reject obvious hallucinations.**
 
-다음 경우에만 NO로 판단하세요:
-1. 질문이 이미지나 의약품 정보와 명백히 모순되는 경우 (예: 이미지에 없는 의약품을 질문에서 언급)
-2. 의학적으로 심각하게 위험한 내용 (예: 잘못된 복용법, 위험한 조합)
-3. 질문이 완전히 무의미하거나 이해 불가능한 경우 (예: "asdfasdf?" 같은 랜덤 텍스트)
+Only reject (NO) in the following cases:
+1. The question clearly contradicts the image or medicine information (e.g., mentioning medicines not in the image)
+2. Medically serious and dangerous content (e.g., incorrect dosage, dangerous combinations)
+3. The question is completely meaningless or incomprehensible (e.g., random text like "asdfasdf?")
 
-**다음은 통과시켜야 합니다:**
-- 질문이 약간 모호하거나 불완전한 경우
-- 질문 형식이 완벽하지 않은 경우
-- 일반적인 명확성 문제
-- 의약품 정보와 약간의 불일치 (명백한 hallucination이 아닌 경우)
+**You should approve the following:**
+- The question is slightly ambiguous or incomplete
+- The question format is not perfect
+- General clarity issues
+- Minor discrepancies with medicine information (not obvious hallucinations)
 
-응답 형식:
-각 줄을 다음과 같이 작성하세요. reason에는 '|'를 포함하지 마세요.
-index|YES 또는 NO|0.0-1.0 사이의 score|reason
-예시: 1|YES|0.8|적절한 질문입니다.
-예시: 2|NO|0.3|이미지에 없는 의약품을 언급했습니다."""
+Response format:
+Write each line as follows. Do not include '|' in the reason.
+index|YES or NO|score between 0.0-1.0|reason
+Example: 1|YES|0.8|Appropriate question.
+Example: 2|NO|0.3|Mentioned medicine not in the image."""
 
         try:
             payload = {
@@ -555,39 +577,39 @@ index|YES 또는 NO|0.0-1.0 사이의 score|reason
         """GPT-5.1으로 질문 묶음을 검수"""
         medicine_context = self._build_medicine_context(medicine_info)
         question_list = "\n".join(f"{idx + 1}. {q}" for idx, q in enumerate(questions))
-        prompt = f"""다음 질문들에 대해 약포 이미지와 의약품 메타데이터를 참고하여 검수해주세요.
+        prompt = f"""Please review the following questions based on the medicine blister pack image and medicine metadata.
 
-이미지 경로: {image_path}
-의약품 정보:
+Image path: {image_path}
+Medicine information:
 {medicine_context}
 
-질문 목록:
+Question list:
 {question_list}
 
-**검수 원칙: 기본적으로 통과시키고, 명백한 hallucination만 제외하세요.**
+**Review Principle: Generally approve, and only reject obvious hallucinations.**
 
-다음 경우에만 NO로 판단하세요:
-1. 질문이 이미지나 의약품 정보와 명백히 모순되는 경우 (예: 이미지에 없는 의약품을 질문에서 언급)
-2. 의학적으로 심각하게 위험한 내용 (예: 잘못된 복용법, 위험한 조합)
-3. 질문이 완전히 무의미하거나 이해 불가능한 경우 (예: "asdfasdf?" 같은 랜덤 텍스트)
+Only reject (NO) in the following cases:
+1. The question clearly contradicts the image or medicine information (e.g., mentioning medicines not in the image)
+2. Medically serious and dangerous content (e.g., incorrect dosage, dangerous combinations)
+3. The question is completely meaningless or incomprehensible (e.g., random text like "asdfasdf?")
 
-**다음은 통과시켜야 합니다:**
-- 질문이 약간 모호하거나 불완전한 경우
-- 질문 형식이 완벽하지 않은 경우
-- 일반적인 명확성 문제
-- 의약품 정보와 약간의 불일치 (명백한 hallucination이 아닌 경우)
+**You should approve the following:**
+- The question is slightly ambiguous or incomplete
+- The question format is not perfect
+- General clarity issues
+- Minor discrepancies with medicine information (not obvious hallucinations)
 
-응답 형식:
-각 줄을 다음과 같이 작성하세요. reason에는 '|'를 포함하지 마세요.
-index|YES 또는 NO|0.0-1.0 사이의 score|reason
-예시: 1|YES|0.8|적절한 질문입니다.
-예시: 2|NO|0.3|이미지에 없는 의약품을 언급했습니다."""
+Response format:
+Write each line as follows. Do not include '|' in the reason.
+index|YES or NO|score between 0.0-1.0|reason
+Example: 1|YES|0.8|Appropriate question.
+Example: 2|NO|0.3|Mentioned medicine not in the image."""
 
         try:
             response = self.openai_client.chat.completions.create(
                 model=self.api_config["openai"]["model"],
                 messages=[
-                    {"role": "system", "content": "당신은 약포 이미지를 검수하는 전문가입니다."},
+                    {"role": "system", "content": "You are an expert at reviewing medicine blister pack images."},
                     {"role": "user", "content": prompt}
                 ],
                 max_completion_tokens=512,
@@ -682,50 +704,58 @@ index|YES 또는 NO|0.0-1.0 사이의 score|reason
         """
         logger.info(f"{source}에서 생성된 {len(qa_pairs)}개의 질문-답변 쌍 검수 시작...")
         
-        reviewed_pairs = []
+        # 1단계: 완전한 문장 체크 (우선 검사)
+        valid_qa_pairs = []
+        reviewed_pairs_dict = {}  # 인덱스 -> 검수 결과 매핑
         
-        for idx, qa_pair in enumerate(qa_pairs, start=1):
+        for idx, qa_pair in enumerate(qa_pairs):
             question = qa_pair.get("question", "").strip()
             answer = qa_pair.get("answer", "").strip()
             
-            # 1. 완전한 문장 체크 (우선 검사)
             question_complete = _is_complete_sentence(question)
             answer_complete = _is_complete_sentence(answer)
             
             if not question_complete:
-                reviewed_pairs.append({
+                reviewed_pairs_dict[idx] = {
                     **qa_pair,
                     "approved": False,
                     "reason": "질문이 완전한 문장 형태가 아닙니다"
-                })
+                }
                 continue
             
             if not answer_complete:
-                reviewed_pairs.append({
+                reviewed_pairs_dict[idx] = {
                     **qa_pair,
                     "approved": False,
                     "reason": "답변이 완전한 문장 형태가 아닙니다"
-                })
+                }
                 continue
             
-            # 2. Hallucination 체크 (질문만 검수)
-            if source == "gpt":
-                review_result = self.review_with_qwen3vl(question, image_path, medicine_info)
-            else:
-                review_result = self.review_with_gpt(question, image_path, medicine_info)
-            
-            # 완전한 문장이고 hallucination이 없으면 통과
-            approved = review_result["approved"]
-            reason = review_result["reason"]
-            
-            reviewed_pairs.append({
-                **qa_pair,
-                "approved": approved,
-                "reason": reason
-            })
-            
-            if idx % 5 == 0:
-                logger.info(f"검수 진행 중: {idx}/{len(qa_pairs)}")
+            valid_qa_pairs.append((idx, qa_pair))
+        
+        # 2단계: Hallucination 체크 (개별 모드로 각 질문-답변 쌍 검수)
+        if valid_qa_pairs:
+            for original_idx, qa_pair in valid_qa_pairs:
+                question = qa_pair.get("question", "").strip()
+                answer = qa_pair.get("answer", "").strip()
+                
+                if source == "gpt":
+                    review_result = self.review_with_qwen3vl(question, answer, image_path, medicine_info)
+                else:
+                    review_result = self.review_with_gpt(question, answer, image_path, medicine_info)
+                
+                reviewed_pairs_dict[original_idx] = {
+                    **qa_pair,
+                    "approved": review_result["approved"],
+                    "reason": review_result["reason"]
+                }
+                
+                # 진행 상황 로깅
+                if len(reviewed_pairs_dict) % 5 == 0:
+                    logger.info(f"검수 진행 중: {len(reviewed_pairs_dict)}/{len(qa_pairs)}")
+        
+        # 원래 순서대로 결과 재구성
+        reviewed_pairs = [reviewed_pairs_dict[idx] for idx in range(len(qa_pairs))]
         
         approved_count = sum(1 for qa in reviewed_pairs if qa["approved"])
         logger.info(f"검수 완료: {approved_count}/{len(qa_pairs)}개 통과")
