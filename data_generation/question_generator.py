@@ -7,9 +7,12 @@ import os
 import logging
 import requests
 import re
+import base64
 from typing import List, Dict, Optional
 from pathlib import Path
 from dotenv import load_dotenv
+from PIL import Image
+import io
 
 import yaml
 from openai import OpenAI
@@ -103,6 +106,12 @@ class QuestionGenerator:
             # 기본 정보 (간결하게)
             if med.get("item_name"):
                 parts.append(f"품명: {med['item_name']}")
+            if med.get("manufacturer_name"):
+                parts.append(f"제조사: {med['manufacturer_name']}")
+            if med.get("class_name"):
+                parts.append(f"분류: {med['class_name']}")
+            if med.get("etc_otc_name"):
+                parts.append(f"구분: {med['etc_otc_name']}")
 
             # 형태 정보 (시각적으로 확인 가능)
             shape_parts = []
@@ -143,6 +152,11 @@ class QuestionGenerator:
                 print_parts.append(f"뒷면:{print_val}")
             if print_parts:
                 parts.append("|".join(print_parts))
+            
+            # 시각적 설명 (있는 경우)
+            if med.get("visual_description"):
+                desc_val = str(med['visual_description'])[:100]  # 최대 100자로 제한
+                parts.append(f"설명:{desc_val}")
 
             # 질문 생성에 필요한 핵심 정보만 포함 (효능/효과, 용법/용량, 주의사항 등 긴 텍스트 제외)
             med_context = " | ".join(parts)
@@ -303,11 +317,11 @@ class QuestionGenerator:
 
         # Explicit print for debug: Show the 3 core sections (remove in production)
         logger.info("=== medicine_context ===")
-        logger.info(medicine_context)
+        print(medicine_context)
         logger.info("=== medicine_list_section ===")
-        logger.info(medicine_list_section)
+        print(medicine_list_section)
         logger.info("=== exclude_section ===")
-        logger.info(exclude_section)
+        print(exclude_section)
 
         # 공통 설명 블록 (GPT / Qwen 둘 다 공유)
         base_body = f"""You are an expert at analyzing medicine blister pack images and generating **high-quality** Korean VQA question–answer pairs for **fine-tuning**.
@@ -351,6 +365,13 @@ Image path (for your reference as a mental pointer; do NOT hallucinate unseen co
      - "How many tablets that look like X are there?" (users can count them)
      - "What color are the tablets?" (users can see it directly)
      - "Where are the tablets located?" (users can see it directly)
+   - **STRICTLY FORBIDDEN**: Meta-questions about how to answer or explain things:
+     - "어떻게 설명해 줄 수 있을까요?" (How can I explain this?)
+     - "어떻게 답해야 할까요?" (How should I answer?)
+     - "어떻게 대답하는 것이 적절할까요?" (How should I respond appropriately?)
+     - "~라고 하면 어떻게 설명해 줄 수 있을까요?" (If someone asks ~, how can I explain?)
+     - "~라는 요청이 들어오면 어떻게 답해야 할까요?" (If a request comes in asking ~, how should I answer?)
+     - These are questions about the AI's response strategy, NOT questions that users would ask about the medicine image.
    - **GOOD question types** (prioritize these):
      - "Is this medicine X?" when imprint is not clearly visible (requires reasoning from shape/color/size).
      - "Can you confirm if this is medicine X?" (user's hypothesis confirmation).
@@ -359,6 +380,7 @@ Image path (for your reference as a mental pointer; do NOT hallucinate unseen co
    - **Question style**:
      - Questions do NOT need to end with a question mark (?). Use natural Korean phrasing.
      - Each question must be a **single-line Korean sentence**.
+     - Questions must be **direct questions about the image**, NOT questions about how to answer or explain things.
      - Do NOT generate meta-questions about the dataset, training process, or this prompt itself.
 
 3. **Positive vs negative sample design**
@@ -557,6 +579,55 @@ Now generate all {target_total} Korean question–answer pairs.
         
         return qa_pairs
 
+    def _encode_image_to_base64(self, image_path: str) -> Optional[str]:
+        """
+        이미지를 base64로 인코딩
+        
+        Args:
+            image_path: 이미지 파일 경로
+        
+        Returns:
+            base64 인코딩된 이미지 문자열 (실패 시 None)
+        """
+        try:
+            # 절대 경로로 변환
+            if Path(image_path).is_absolute():
+                abs_image_path = Path(image_path)
+            else:
+                abs_image_path = Path(__file__).parent / image_path
+            
+            if not abs_image_path.exists():
+                logger.error(f"이미지 파일을 찾을 수 없습니다: {abs_image_path}")
+                return None
+            
+            # 이미지 열기 및 리사이즈 (너무 크면 API 제한에 걸릴 수 있음)
+            img = Image.open(abs_image_path)
+            
+            # 이미지가 너무 크면 리사이즈 (최대 2048x2048)
+            max_size = 2048
+            if img.width > max_size or img.height > max_size:
+                img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
+            # JPEG로 변환하여 base64 인코딩
+            buffer = io.BytesIO()
+            # RGBA 모드면 RGB로 변환
+            if img.mode == 'RGBA':
+                rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                rgb_img.paste(img, mask=img.split()[3])  # alpha 채널을 마스크로 사용
+                img = rgb_img
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            img.save(buffer, format='JPEG', quality=95)
+            img_bytes = buffer.getvalue()
+            
+            base64_image = base64.b64encode(img_bytes).decode('utf-8')
+            return base64_image
+            
+        except Exception as e:
+            logger.error(f"이미지 인코딩 중 오류 발생: {str(e)}")
+            return None
+
     def generate_with_gpt(self, image_path: str, medicine_info: List[Dict]) -> List[Dict]:
         """
         GPT-5.1을 사용하여 질문-답변 쌍 생성
@@ -569,6 +640,13 @@ Now generate all {target_total} Korean question–answer pairs.
             [{"question": str, "answer": str}, ...] 형식의 리스트
         """
         logger.info(f"GPT-5.1로 질문-답변 쌍 생성 시작: {image_path}")
+        
+        # 이미지를 base64로 인코딩
+        base64_image = self._encode_image_to_base64(image_path)
+        if base64_image is None:
+            logger.error("이미지 인코딩 실패, 텍스트만으로 진행합니다.")
+            # 이미지 인코딩 실패 시 기존 방식으로 fallback
+            base64_image = None
         
         # 의약품 정보 컨텍스트
         medicine_context = self._build_medicine_context(medicine_info)
@@ -596,19 +674,44 @@ Now generate all {target_total} Korean question–answer pairs.
 - CRITICAL: Focus on questions that are ambiguous or difficult for users to confirm by themselves. Avoid questions that users can easily verify (e.g., counting tablets, seeing colors directly).
 - CRITICAL: Use ALL medicines evenly in your questions. If there are multiple medicines in the medicine information list, you MUST generate questions about EACH medicine, not just one. DO NOT generate all questions about only one medicine - this is STRICTLY FORBIDDEN. Distribute questions evenly across all available medicines.
 - CRITICAL: Avoid generating duplicate or very similar questions. Each question must be unique.
+- STRICTLY FORBIDDEN: Do NOT generate meta-questions about how to answer or explain things. Examples of FORBIDDEN questions:
+  - "어떻게 설명해 줄 수 있을까요?" (How can I explain this?)
+  - "어떻게 답해야 할까요?" (How should I answer?)
+  - "어떻게 대답하는 것이 적절할까요?" (How should I respond appropriately?)
+  - "~라고 하면 어떻게 설명해 줄 수 있을까요?" (If someone asks ~, how can I explain?)
+  - "~라는 요청이 들어오면 어떻게 답해야 할까요?" (If a request comes in asking ~, how should I answer?)
+  - These are questions about AI response strategy, NOT direct questions about the medicine image that users would ask.
 - IMPORTANT: Generate MANY negative sample questions (asking about medicines NOT in the list). Use question formats like "이 이미지에 [약명] 정제가 포함되어 있는지 확인해 주세요" or "이 이미지에 [약명] 정제가 포함되어 있나요". Use common medicine names like 타이레놀, 이부프로펜, 아스피린, 파라세타몰, 아목시실린, 게보린, 부루펜, 케토톱, 아세트아미노펜, 나프록센, 디클로페낙, 멜록시캠, 셀레콕시브, 로키소닌, 세파클러, etc.
 - IMPORTANT: When the imprint is not clearly visible, you MUST state that 100% certainty is not possible. Do NOT identify a single specific medicine. Instead, provide 3-5 candidate medicines that match the visual characteristics, and explain that without the imprint, it is difficult to determine which one it is. Never claim a single specific medicine when identification is based on shape/color/size alone.
 - CRITICAL: NEVER describe visual elements (color, shape, size, count, position) that are NOT actually visible in the image. Only mention what you can actually see in the image. If you cannot see certain tablets/capsules clearly, state that explicitly rather than inventing descriptions. This is a critical requirement to avoid hallucination.
 - IMPORTANT: The medicine information list is provided ONLY for dataset generation. In real usage, users will ONLY provide the image. Do NOT explicitly mention "제공된 정보에 따르면" or "약 정보 목록에 따르면" in answers. Phrase answers as if identifying from the image alone.
 - Questions do NOT need to end with a question mark (?). Use natural Korean phrasing.
+- Questions must be DIRECT questions about the image content, NOT questions about how to answer or explain things.
 - Answers should be 2-4 sentences in Korean, focusing on image observations first, then supplementing with medicine information when needed."""
 
         try:
+            # 이미지가 있으면 vision API 사용, 없으면 텍스트만
+            if base64_image:
+                user_message = [
+                    {
+                        "type": "text",
+                        "text": prompt
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                ]
+            else:
+                user_message = prompt
+            
             response = self.openai_client.chat.completions.create(
                 model=self.api_config["openai"]["model"],
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": user_message}
                 ],
                 max_completion_tokens=self.api_config["openai"]["max_tokens"],
                 temperature=self.api_config["openai"]["temperature"]
@@ -619,6 +722,7 @@ Now generate all {target_total} Korean question–answer pairs.
             
             if len(qa_pairs) < max_qa_pairs:
                 logger.warning(f"GPT-5.1: 생성된 질문-답변 쌍이 {max_qa_pairs}개보다 작습니다 ({len(qa_pairs)}개)")
+                breakpoint()
             
             logger.info(f"GPT-5.1로 {len(qa_pairs)}개의 질문-답변 쌍 생성 완료")
             return qa_pairs[:max_qa_pairs]
@@ -675,12 +779,19 @@ Now generate all {target_total} Korean question–answer pairs.
             # Qwen3-VL API 호출
             # Thinking 모델이 긴 reasoning을 생성할 수 있으므로 max_tokens를 늘림
             max_tokens_for_qa = max(self.api_config["qwen3vl"]["max_tokens"], 8192)
+            
+            # 이미지를 base64로 인코딩 (API가 로컬 경로를 직접 읽지 못할 수 있으므로)
+            base64_image = self._encode_image_to_base64(str(abs_image_path))
+            if base64_image is None:
+                logger.error("Qwen3-VL: 이미지 인코딩 실패")
+                return []
+            
             payload = {
                 "text": prompt,
                 "images": [
                     {
                         "type": "image",
-                        "image": str(abs_image_path)
+                        "image": f"data:image/jpeg;base64,{base64_image}"
                     }
                 ],
                 "max_tokens": max_tokens_for_qa,

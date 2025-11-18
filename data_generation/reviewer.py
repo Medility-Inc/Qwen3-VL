@@ -155,55 +155,93 @@ class Reviewer:
             return yaml.safe_load(f)
 
     def _build_medicine_context(self, medicine_info: List[Dict]) -> str:
-        """의약품 정보를 간결한 문장으로 정리"""
+        """의약품 정보를 컨텍스트 문자열로 변환 (질문 생성용 간결 버전)"""
         if not medicine_info:
             return "의약품 정보가 없습니다."
-
+        
         context_parts = []
+        max_context_length = 5000  # 최대 컨텍스트 길이 제한 (문자 수)
+        current_length = 0
+        
         for med in medicine_info:
             parts = []
+            # 기본 정보 (간결하게)
             if med.get("item_name"):
                 parts.append(f"품명: {med['item_name']}")
-            if med.get("onesglobal_item_name"):
-                parts.append(f"국제명: {med['onesglobal_item_name']}")
-            if med.get("onesglobal_material_name"):
-                parts.append(f"재질/소재: {med['onesglobal_material_name']}")
-            if med.get("onesglobal_ingredient_ko"):
-                parts.append(f"성분: {med['onesglobal_ingredient_ko']}")
+            if med.get("manufacturer_name"):
+                parts.append(f"제조사: {med['manufacturer_name']}")
+            if med.get("class_name"):
+                parts.append(f"분류: {med['class_name']}")
+            if med.get("etc_otc_name"):
+                parts.append(f"구분: {med['etc_otc_name']}")
 
+            # 형태 정보 (시각적으로 확인 가능)
             shape_parts = []
             if med.get("drug_shape"):
                 shape_parts.append(med["drug_shape"])
-            if med.get("onesglobal_form_type"):
-                shape_parts.append(med["onesglobal_form_type"])
-            if shape_parts:
-                parts.append(f"제형/형태: {', '.join(shape_parts)}")
             if med.get("form_code_name"):
-                parts.append(f"형태 코드: {med['form_code_name']}")
+                shape_parts.append(med["form_code_name"])
+            if shape_parts:
+                parts.append(f"형태: {', '.join(shape_parts)}")
+            
+            # 크기 정보 (시각적으로 확인 가능)
+            size_parts = []
             if med.get("thick"):
-                parts.append(f"두께: {med['thick']}")
-
-            if med.get("onesglobal_route"):
-                parts.append(f"투여 경로: {med['onesglobal_route']}")
-            if med.get("onesglobal_indication"):
-                parts.append(f"효능/효과: {med['onesglobal_indication']}")
-            if med.get("onesglobal_ethical_type"):
-                parts.append(f"의약분류: {med['onesglobal_ethical_type']}")
-            if med.get("onesglobal_storage"):
-                parts.append(f"보관 방법: {med['onesglobal_storage']}")
-            if med.get("onesglobal_valid_term"):
-                parts.append(f"유효기간: {med['onesglobal_valid_term']}")
-            if med.get("onesglobal_pack_unit"):
-                parts.append(f"포장 단위: {med['onesglobal_pack_unit']}")
+                size_parts.append(f"두께:{med['thick']}")
+            if med.get("length_long"):
+                size_parts.append(f"장축:{med['length_long']}")
+            if med.get("length_short"):
+                size_parts.append(f"단축:{med['length_short']}")
+            if size_parts:
+                parts.append("크기:" + "|".join(size_parts))
+            
+            # 색상 정보 (시각적으로 확인 가능)
+            color_parts = []
+            if med.get("color_front"):
+                color_parts.append(med["color_front"])
+            if med.get("color_back"):
+                color_parts.append(med["color_back"])
+            if color_parts:
+                parts.append(f"색상:{','.join(color_parts)}")
+            
+            # 인쇄 정보 (시각적으로 확인 가능, 짧게)
+            print_parts = []
             if med.get("print_front"):
-                parts.append(f"앞면 인쇄: {med['print_front']}")
+                print_val = str(med['print_front'])[:50]  # 최대 50자로 제한
+                print_parts.append(f"앞면:{print_val}")
             if med.get("print_back"):
-                parts.append(f"뒷면 인쇄: {med['print_back']}")
+                print_val = str(med['print_back'])[:50]  # 최대 50자로 제한
+                print_parts.append(f"뒷면:{print_val}")
+            if print_parts:
+                parts.append("|".join(print_parts))
+            
+            # 시각적 설명 (있는 경우)
+            if med.get("visual_description"):
+                desc_val = str(med['visual_description'])[:100]  # 최대 100자로 제한
+                parts.append(f"설명:{desc_val}")
 
-            if parts:
-                context_parts.append(" | ".join(parts))
+            # 질문 생성에 필요한 핵심 정보만 포함 (효능/효과, 용법/용량, 주의사항 등 긴 텍스트 제외)
+            med_context = " | ".join(parts)
+            
+            # 길이 체크
+            if current_length + len(med_context) > max_context_length:
+                # 남은 공간만큼만 추가
+                remaining = max_context_length - current_length
+                if remaining > 100:  # 최소 100자 이상 남았을 때만 추가
+                    med_context = med_context[:remaining] + "..."
+                    context_parts.append(med_context)
+                break
+            
+            context_parts.append(med_context)
+            current_length += len(med_context) + 1  # +1 for newline
 
-        return "\n".join(context_parts) if context_parts else "의약품 정보가 없습니다."
+        result = "\n".join(context_parts) if context_parts else "의약품 정보가 없습니다."
+        
+        # 최종 길이 제한 (안전장치)
+        if len(result) > max_context_length:
+            result = result[:max_context_length] + "\n...(의약품 정보가 길어 일부 생략됨)"
+        
+        return result
 
     def _resolve_image_path(self, image_path: str) -> Optional[Path]:
         """이미지 경로를 절대 경로로 변환하고 존재 여부 확인"""
