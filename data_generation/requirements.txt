@@ -1,0 +1,25 @@
+# Qwen3-VL 데이터셋 생성 파이프라인 의존성
+
+# 데이터베이스
+pymysql>=1.1.0
+
+# 데이터 처리
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 이미지 처리
+Pillow>=10.0.0
+requests>=2.31.0
+
+# 설정 파일
+PyYAML>=6.0
+
+# OpenAI API
+openai>=1.0.0
+
+# 로깅 및 유틸리티
+python-dotenv>=1.0.0
+
+# 테스트
+pytest>=7.4.0
+
